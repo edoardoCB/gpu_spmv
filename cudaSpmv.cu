@@ -392,7 +392,7 @@ static str_formatData getFormatDataCSR( str_matCSR * matCSR )
 	}
 	// format's name
 	str_formatData fd;
-	strcpy( fd.name, "f_csr" );
+	strcpy( fd.name, "fcsr" );
 	// CSR memory footprint
 	fd.mfp =          (double) (   matCSR->nnz         * sizeof(FPT) ); // val
 	fd.mfp = fd.mfp + (double) (   matCSR->nnz         * sizeof(UIN) ); // col
@@ -809,7 +809,7 @@ static str_formatData getFormatDataK1( const UIN blockSize, const str_matCSR mat
 	tc = tc + ti;
 	// format's name
 	str_formatData fd;
-	strcpy( fd.name, "f_k1" );
+	strcpy( fd.name, "fk1" );
 	// K1 memory footprint
 	fd.mfp =          (double) ( matK1->chunkNum * sizeof(UIN) ); // nmc
 	fd.mfp = fd.mfp + (double) ( matK1->chunkNum * sizeof(UIN) ); // chp
@@ -908,18 +908,16 @@ static __host__ str_res test_gk1( const UIN cudaBlockSize, const str_matK1 matK1
 
 
 
-/*
-
 typedef struct { UIN nrows; UIN nnz; UIN hbs; UIN lenAX; UIN lenBRP; UIN lenMAPX; FPT * ax; UIN * brp; UIN * mapx; } str_matAXC;
 
 
 
 static UIN get_brpAXC( const str_matCSR matCSR, str_matAXC * matAXC )
 {
-	const UIN hbs = matAXC->hbs;
+	const UIN hbs   = matAXC->hbs;
 	const UIN nrows = matAXC->nrows;
 	      UIN rowID, brickNum;
-	for ( rowID = 0; rowID < matAXC->nrows; rowID++ )
+	for ( rowID = 0; rowID < nrows; rowID++ )
 	{
 		brickNum               = ( matCSR.rl[rowID] + hbs - 1 ) / hbs;
 		matAXC->brp[rowID + 1] = matAXC->brp[rowID]  + ( 2 * brickNum * hbs );
@@ -1003,15 +1001,9 @@ static str_formatData getFormatDataAXC( const UIN ompNT, const UIN hbs, const st
 	}
 	ti = tt / (double) NUM_ITE;
 	tc = tc + ti;
-	matAXC->ax      = (FPT *) _mm_malloc( matAXC->lenAX * sizeof(FPT), 64 ); TEST_POINTER( matAXC->ax );
-	#pragma omp parallel for default(shared) private(i) num_threads(ompNT) schedule(OMP_SCH) if(_OPENMP)
-	for ( i = 0; i < matAXC->lenAX; i++ )
-		matAXC->ax[i] = 0;
+	matAXC->ax      = (FPT *) calloc( matAXC->lenAX,   sizeof(FPT) ); TEST_POINTER( matAXC->ax );
 	matAXC->lenMAPX = (matAXC->lenAX >> 1) + 8;
-	matAXC->mapx    = (UIN *) _mm_malloc( matAXC->lenMAPX * sizeof(UIN), 64 ); TEST_POINTER( matAXC-> mapx );
-	#pragma omp parallel for default(shared) private(i) num_threads(ompNT) schedule(OMP_SCH) if(_OPENMP)
-	for ( i = 0; i < matAXC->lenMAPX; i++ )
-		matAXC->mapx[i] = 0;
+	matAXC->mapx    = (UIN *) calloc( matAXC->lenMAPX, sizeof(UIN) ); TEST_POINTER( matAXC-> mapx );
 	tt = 0.0;
 	for ( i = 0; i < NUM_ITE; i++ )
 	{
@@ -1036,7 +1028,7 @@ static str_formatData getFormatDataAXC( const UIN ompNT, const UIN hbs, const st
 	tc = tc + ti;
 	// format's name
 	str_formatData fd;
-	strcpy( fd.name, "f_axc" );
+	strcpy( fd.name, "faxc" );
 	// AXC memory footprint
 	fd.mfp =          (double) ( matAXC->lenAX  * sizeof(FPT) ); // ax
 	fd.mfp = fd.mfp + (double) ( matAXC->lenBRP * sizeof(UIN) ); // brp ( stores the starting address of a row )
@@ -1049,63 +1041,88 @@ static str_formatData getFormatDataAXC( const UIN ompNT, const UIN hbs, const st
 
 
 
-static void int_axc( const UIN ompNT, const UIN hbs, const UIN nrows, const FPT * ax, const UIN * brp, FPT * y )
+#ifndef FULL_MASK
+	#define FULL_MASK 0xffffffff
+#endif
+
+
+
+static __global__ void gaxc( const FPT * ax, const UIN * brp, FPT * y )
 {
-	const UIN stride = 2 * hbs;
-	      UIN rowID, posAX;
-	      FPT red, sum;
-	  __m512d val, vec, pro;
-	#pragma omp parallel for default(shared) private(rowID,posAX,val,vec,pro,red,sum) num_threads(ompNT) schedule(OMP_SCH) if(_OPENMP)
-	for ( rowID = 0; rowID < nrows; rowID++ )
+	const UIN tidGRID = blockIdx.x * blockDim.x + threadIdx.x;
+	const UIN widGRID = tidGRID >> 5;
+	const UIN tidWARP = tidGRID & 31;
+	const UIN p1      = brp[widGRID]   + tidWARP;
+	const UIN p2      = brp[widGRID+1] + tidWARP;
+	      UIN pAX;
+	      FPT val = 0.0, red = 0.0;
+	for ( pAX = p1; pAX < p2; pAX = pAX + 64 )
 	{
-		sum =  0;
-		for ( posAX = brp[rowID]; posAX < brp[rowID+1]; posAX = posAX + stride )
-		{
-			val = _mm512_load_pd( &ax[posAX]       );
-			vec = _mm512_load_pd( &ax[posAX + hbs] );
-			pro = _mm512_mul_pd( val, vec );
-			red = _mm512_reduce_add_pd( pro );
-			sum = sum + red;
-		}
-		y[rowID] = sum;
+		val = ax[pAX] * ax[pAX+32];
+		val = val + __shfl_down_sync( FULL_MASK, val, 16 );
+		val = val + __shfl_down_sync( FULL_MASK, val,  8 );
+		val = val + __shfl_down_sync( FULL_MASK, val,  4 );
+		val = val + __shfl_down_sync( FULL_MASK, val,  2 );
+		val = val + __shfl_down_sync( FULL_MASK, val,  1 );
+		red = red + val;
 	}
+	if (tidWARP == 0) y[widGRID] = red;
 	return;
 }
 
 
 
-static str_res test_int_axc( const UIN ompNT, const str_matAXC matAXC, const FPT * ref )
+static __host__ str_res test_gaxc( const UIN cudaBlockSize, const str_matAXC matAXC, const FPT * ref )
 {
-	//
-	const UIN nrows = matAXC.nrows;
-	const UIN nnz   = matAXC.nnz;
-	const UIN hbs   = matAXC.hbs;
+	// 
+	UIN cudaBlockNum = matAXC.nrows * 32;
+	    cudaBlockNum = ( cudaBlockNum + cudaBlockSize - 1 ) / cudaBlockSize;
+	// allocate memory on GPU
+	FPT * d_ax;    HANDLE_CUDA_ERROR( cudaMalloc( &d_ax,    matAXC.lenAX                * sizeof(FPT) ) ); TEST_POINTER( d_ax    );
+	UIN * d_brp;   HANDLE_CUDA_ERROR( cudaMalloc( &d_brp,   matAXC.lenBRP               * sizeof(UIN) ) ); TEST_POINTER( d_brp   );
+	FPT * d_res;   HANDLE_CUDA_ERROR( cudaMalloc( &d_res,   matAXC.nrows                * sizeof(FPT) ) ); TEST_POINTER( d_res   );
+	// copy necessary arrays to device
+	HANDLE_CUDA_ERROR( cudaMemcpy( d_ax,    matAXC.ax,    matAXC.lenAX                  * sizeof(FPT), cudaMemcpyHostToDevice ) );
+	HANDLE_CUDA_ERROR( cudaMemcpy( d_brp,   matAXC.brp,   matAXC.lenBRP                 * sizeof(UIN), cudaMemcpyHostToDevice ) );
+	// create events for time measuring
+	cudaEvent_t cet1; HANDLE_CUDA_ERROR( cudaEventCreate( &cet1 ) );
+	cudaEvent_t cet2; HANDLE_CUDA_ERROR( cudaEventCreate( &cet2 ) );
 	// timed iterations
-	double ti = 0.0, tt = 0.0;
-	struct timespec t1, t2;
-	FPT * res = (FPT *) calloc( nrows, sizeof(FPT) ); TEST_POINTER( res );
+	float ti = 0.0f, tt = 0.0f;
 	UIN i;
 	for ( i = 0; i < NUM_ITE; i++ )
 	{
-		GT( t1 );
-		int_axc( ompNT, hbs, nrows, matAXC.ax, matAXC.brp, res );
-		GT( t2 );
-		ti = measure_time( t2, t1 );
+		HANDLE_CUDA_ERROR( cudaEventRecord( cet1 ) );
+		gaxc <<<cudaBlockNum, cudaBlockSize>>> ( d_ax, d_brp, d_res );
+		HANDLE_CUDA_ERROR( cudaEventRecord( cet2 ) );
+		HANDLE_CUDA_ERROR( cudaEventSynchronize( cet2 ) );
+		HANDLE_CUDA_ERROR( cudaEventElapsedTime( &ti, cet1, cet2 ) );
 		tt = tt + ti;
 	}
+	// destroy events for time measuring
+	HANDLE_CUDA_ERROR( cudaEventDestroy( cet1 ) );
+	HANDLE_CUDA_ERROR( cudaEventDestroy( cet2 ) );
+	// copy result from device
+	FPT * res = (FPT *) malloc( matAXC.nrows * sizeof(FPT) ); TEST_POINTER( res );
+	HANDLE_CUDA_ERROR( cudaMemcpy( res, d_res, matAXC.nrows * sizeof(FPT), cudaMemcpyDeviceToHost ) );
+	// free device memory
+	HANDLE_CUDA_ERROR( cudaFree( d_ax    ) );
+	HANDLE_CUDA_ERROR( cudaFree( d_brp   ) );
+	HANDLE_CUDA_ERROR( cudaFree( d_res   ) );
 	// store results
 	str_res sr;
-	strcpy( sr.name, "p_axc" );
-	sr.et    = tt / (double) NUM_ITE;
-	sr.ot    = 0.0;
-	sr.flops = ( 2.0 * ( (double) nnz ) ) / sr.et;
-	get_errors( nrows, ref, res, &(sr.sErr) );
+	strcpy( sr.name, "gaxc" );
+	sr.et    = ( (double) tt / (double) NUM_ITE ) * 1e-3;
+	sr.flops = ( 2.0 * ( (double) matAXC.nnz ) ) / sr.et;
+	get_errors( matAXC.nrows, ref, res, &(sr.sErr) );
+	// free cpu memory
 	free( res );
 	return( sr );
 }
 
 
 
+/*
 typedef struct{ UIN nrows; UIN nnz; char mode[8]; UIN tileHW; UIN tileH; UIN logTH; UIN tileN; UIN lenAX; UIN lenSEC; UIN lenCON; UIN log; UIN bs; FPT * ax; UIN * sec; UIN * con; } str_matAXT;
 
 
@@ -2091,12 +2108,12 @@ int main( int argc, char ** argv )
 	str_res sr04 = test_gk1( sia.cbs, matK1, vr, yr );
 	// K1 format  -------------------------------------------------------------------------------------------------------------------
 
-/*
 	// AXC format  ------------------------------------------------------------------------------------------------------------------
-	str_matAXC matAXC; str_formatData fd03 = getFormatDataAXC( sia.ompMT, sia.hbs, matCSR, vr, &matAXC );
-	str_res sr05 = test_int_axc( sia.ompMT, matAXC, yr );
+	str_matAXC matAXC; str_formatData fd03 = getFormatDataAXC( sia.ompMT, 32, matCSR, vr, &matAXC );
+	str_res sr05 = test_gaxc( sia.cbs, matAXC, yr );
 	// AXC format  ------------------------------------------------------------------------------------------------------------------
 
+/*
 	// AXT format  ------------------------------------------------------------------------------------------------------------------
 	str_matAXT matAXT1;  str_formatData fd04 = getFormatDataAXT( sia.ompMT,   64, 8,   1, "UNC", matCSR, vr, &matAXT1 );
 	str_matAXT matAXT2;  str_formatData fd05 = getFormatDataAXT( sia.ompMT,   64, 8,   4, "UNC", matCSR, vr, &matAXT2 );
@@ -2144,8 +2161,7 @@ int main( int argc, char ** argv )
 	printf( "%25s %20s %10s %20s\n", "format", "memory [Mbytes]", "occupancy", "convTime [s]" );
 	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd01.name, ( fd01.mfp * 1e-6 ), fd01.beta, fd01.ct ); fflush(stdout);
 	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd02.name, ( fd02.mfp * 1e-6 ), fd02.beta, fd02.ct ); fflush(stdout);
-
-//	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd03.name, ( fd03.mfp * 1e-6 ), fd03.beta, fd03.ct ); fflush(stdout);
+	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd03.name, ( fd03.mfp * 1e-6 ), fd03.beta, fd03.ct ); fflush(stdout);
 //	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd04.name, ( fd04.mfp * 1e-6 ), fd04.beta, fd04.ct ); fflush(stdout);
 //	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd05.name, ( fd05.mfp * 1e-6 ), fd05.beta, fd05.ct ); fflush(stdout);
 //	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd06.name, ( fd06.mfp * 1e-6 ), fd06.beta, fd06.ct ); fflush(stdout);
@@ -2173,7 +2189,7 @@ int main( int argc, char ** argv )
 	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr02.name, sr02.et, ( sr02.flops * 1e-9 ), sr02.ot, sr02.sErr.aErr, sr02.sErr.rErr, sr02.sErr.pos ); fflush(stdout);
 	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr03.name, sr03.et, ( sr03.flops * 1e-9 ), sr03.ot, sr03.sErr.aErr, sr03.sErr.rErr, sr03.sErr.pos ); fflush(stdout);
 	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr04.name, sr04.et, ( sr04.flops * 1e-9 ), sr04.ot, sr04.sErr.aErr, sr04.sErr.rErr, sr04.sErr.pos ); fflush(stdout);
-//	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr05.name, sr05.et, ( sr05.flops * 1e-9 ), sr05.ot, sr05.sErr.aErr, sr05.sErr.rErr, sr05.sErr.pos ); fflush(stdout);
+	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr05.name, sr05.et, ( sr05.flops * 1e-9 ), sr05.ot, sr05.sErr.aErr, sr05.sErr.rErr, sr05.sErr.pos ); fflush(stdout);
 //	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr06.name, sr06.et, ( sr06.flops * 1e-9 ), sr06.ot, sr06.sErr.aErr, sr06.sErr.rErr, sr06.sErr.pos ); fflush(stdout);
 //	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr07.name, sr07.et, ( sr07.flops * 1e-9 ), sr07.ot, sr07.sErr.aErr, sr07.sErr.rErr, sr07.sErr.pos ); fflush(stdout);
 //	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr08.name, sr08.et, ( sr08.flops * 1e-9 ), sr08.ot, sr08.sErr.aErr, sr08.sErr.rErr, sr08.sErr.pos ); fflush(stdout);
