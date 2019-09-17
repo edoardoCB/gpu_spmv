@@ -26,7 +26,7 @@ MAT_LST05="M11_pdb1HYS.bin M12_hamrle3.bin M13_consph.bin M14_g3_circuit.bin M15
 MAT_LST06="M21_fullChip.bin M22_e005.csr M23_delaunay_n23.bin M24_circuit5M.bin M25_Serena.bin"
 MAT_LST07="M00_e001.csr M01_scircuit.bin M02_mac_econ_fwd500.bin M03_e002.csr M04_mc2depi.bin M05_rma10.bin M06_cop20k_A.bin M07_webbase-1M.bin M08_shipsec1.bin M09_e003.csr M10_cant.bin M11_pdb1HYS.bin M12_hamrle3.bin M13_consph.bin M14_g3_circuit.bin M15_thermal2.bin M16_e004.csr M17_pwtk.bin M18_kkt_power.bin M19_memchip.bin M20_in-2004.bin M21_fullChip.bin M22_e005.csr M23_delaunay_n23.bin M24_circuit5M.bin M25_Serena.bin"
 MAT_LST08="M06_cop20k_A.bin"
-MAT_LST=${MAT_LST07}
+MAT_LST=${MAT_LST01}
 SLEEP_TIME=30
 
 
@@ -123,10 +123,12 @@ for MAT in ${MAT_LST}; do
 			echo "#SBATCH --time=${JOB_TIME}"       >> ${SH_FILE}
 			echo "module load intel/2017u8"         >> ${SH_FILE}
 			echo "module load cuda/9.2"             >> ${SH_FILE}
+			echo "export OMP_WAIT_POLICY=active"    >> ${SH_FILE}
+			echo "export OMP_DYNAMIC=false"         >> ${SH_FILE}
+			echo "export OMP_PROC_BIND=true"        >> ${SH_FILE}
 			echo "export OMP_NUM_THREADS=40"        >> ${SH_FILE}
 			echo "export MKL_NUM_THREADS=1"         >> ${SH_FILE}
-			echo "export OMP_SCHEDULE=dynamic"      >> ${SH_FILE}
-			echo "./${EXE} ${MAT} ${BS}"            >> ${SH_FILE}
+			echo "./${EXE} ${BS} ${MAT}"            >> ${SH_FILE}
 			chmod 755 ${SH_FILE}
 			JOB=$(sbatch ${SH_FILE})
 			JOB=${JOB:${#JOB}-7:${#JOB}}
@@ -187,10 +189,12 @@ for MAT in ${MAT_LST}; do
 			echo "module load intel-compilers-17"    >> ${PBS_FILE}
 			echo "module load openmpi"               >> ${PBS_FILE}
 			echo "cd \$PBS_O_WORKDIR"                >> ${PBS_FILE}
+			echo "export OMP_WAIT_POLICY=active"     >> ${PBS_FILE}
+			echo "export OMP_DYNAMIC=false"          >> ${PBS_FILE}
+			echo "export OMP_PROC_BIND=true"         >> ${PBS_FILE}
 			echo "export OMP_NUM_THREADS=40"         >> ${PBS_FILE}
 			echo "export MKL_NUM_THREADS=1"          >> ${PBS_FILE}
-			echo "export OMP_SCHEDULE=dynamic"       >> ${PBS_FILE}
-			echo "./${EXE} ${MAT} ${BS}"             >> ${PBS_FILE}
+			echo "./${EXE} ${BS} ${MAT}"             >> ${PBS_FILE}
 			chmod 755 ${PBS_FILE}
 			JOB=$(qsub ${PBS_FILE})
 			JOB_ID="${JOB:0:7}"
