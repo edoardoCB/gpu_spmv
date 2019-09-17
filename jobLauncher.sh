@@ -17,7 +17,8 @@ HOST=$(hostname)
 ROOT_DIR=${PWD}
 MAT_SRC=${ROOT_DIR}/matrices
 EXE=$1
-MAT_LST00="M_0_arrowHeadSymNnz100.csr"
+MAT_LST_0="M_0_arrowHeadSymNnz100.csr"
+MAT_LST00="M00_e001.csr"
 MAT_LST01="M01_scircuit.bin"
 MAT_LST02="M25_Serena.bin"
 MAT_LST03="M00_e001.csr M03_e002.csr M09_e003.csr M16_e004.csr M22_e005.csr"
@@ -26,8 +27,12 @@ MAT_LST05="M11_pdb1HYS.bin M12_hamrle3.bin M13_consph.bin M14_g3_circuit.bin M15
 MAT_LST06="M21_fullChip.bin M22_e005.csr M23_delaunay_n23.bin M24_circuit5M.bin M25_Serena.bin"
 MAT_LST07="M00_e001.csr M01_scircuit.bin M02_mac_econ_fwd500.bin M03_e002.csr M04_mc2depi.bin M05_rma10.bin M06_cop20k_A.bin M07_webbase-1M.bin M08_shipsec1.bin M09_e003.csr M10_cant.bin M11_pdb1HYS.bin M12_hamrle3.bin M13_consph.bin M14_g3_circuit.bin M15_thermal2.bin M16_e004.csr M17_pwtk.bin M18_kkt_power.bin M19_memchip.bin M20_in-2004.bin M21_fullChip.bin M22_e005.csr M23_delaunay_n23.bin M24_circuit5M.bin M25_Serena.bin"
 MAT_LST08="M06_cop20k_A.bin"
-MAT_LST=${MAT_LST01}
+MAT_LST=${MAT_LST00}
 SLEEP_TIME=30
+KFSL=4450
+KFSU=4550
+CFSL=6600
+CFSU=6700
 
 
 
@@ -37,7 +42,7 @@ if grep -q "kay" <<< "${HOST}"; then
 	echo "host: [KAY]"            >> ${EXE_LOG}
 	echo "date: [$(date +"%F")]"  >> ${EXE_LOG}
 	echo " "                      >> ${EXE_LOG}
-	KAY_DIR="${ROOT_DIR}/kay_$(date +"%F")"
+	KAY_DIR="${ROOT_DIR}/KAY_[$(date +"%F")]"
 	OUT_DIR=${KAY_DIR}/results
 	SHL_DIR=${KAY_DIR}/launchers
 	STA_DIR=${KAY_DIR}/statistics
@@ -157,12 +162,12 @@ for MAT in ${MAT_LST}; do
 			done
 			SLURM_FSIZE=$(stat -c%s "${SLURM_FILE}")
 			printf -v SIZE '%d' ${SLURM_FSIZE} 2>/dev/null
-			if [ ${SIZE} -lt 5000 ]; then
-				sleep 2
+			if [ ${SIZE} -lt ${KFSL} ]; then
+				sleep 7
 				SLURM_FSIZE=$(stat -c%s "${SLURM_FILE}")
 				printf -v SIZE '%d' ${SLURM_FSIZE} 2>/dev/null
 			fi
-			if [ ${SIZE} -gt 5700 ] && [ ${SIZE} -lt 5800 ]; then
+			if [ ${SIZE} -gt ${KFSL} ] && [ ${SIZE} -lt ${KFSU} ]; then
 				echo "[MEASURING] JOB_ID: ${JOB_ID} JOB_NAME: ${JOB_NAME} CHECKED  @ $(date +"%T")  [CORRECT] ${SIZE}" >> ${EXE_LOG}
 			else
 				echo "[MEASURING] JOB_ID: ${JOB_ID} JOB_NAME: ${JOB_NAME} CHECKED  @ $(date +"%T")  [WRONG]   ${SIZE}" >> ${EXE_LOG}
@@ -217,12 +222,12 @@ for MAT in ${MAT_LST}; do
 			done
 			RFILE_SIZE=$(stat -c%s "${RFILE_NAME}")
 			printf -v SIZE '%d' ${RFILE_SIZE} 2>/dev/null
-			if [ ${SIZE} -lt 7000 ]; then
-				sleep 2
+			if [ ${SIZE} -lt ${CFSL} ]; then
+				sleep 7
 				RFILE_SIZE=$(stat -c%s "${RFILE_NAME}")
 				printf -v SIZE '%d' ${RFILE_SIZE} 2>/dev/null
 			fi
-			if [ ${SIZE} -gt 7800 ] && [ ${SIZE} -lt 7900 ]; then
+			if [ ${SIZE} -gt ${CFSL} ] && [ ${SIZE} -lt ${CFSU} ]; then
 				echo "[MEASURING] JOB_ID: ${JOB_ID} JOB_NAME: ${JOB_NAME} CHECKED  @ $(date +"%T")  [CORRECT] ${SIZE}" >> ${EXE_LOG}
 			else
 				echo "[MEASURING] JOB_ID: ${JOB_ID} JOB_NAME: ${JOB_NAME} CHECKED  @ $(date +"%T")  [WRONG]   ${SIZE}" >> ${EXE_LOG}

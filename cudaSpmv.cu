@@ -1047,26 +1047,29 @@ static str_formatData getFormatDataAXC( const UIN ompNT, const UIN hbs, const st
 
 
 
-static __global__ void gaxc( const FPT * ax, const UIN * brp, FPT * y )
+static __global__ void gaxc( const UIN NROWS, const FPT * ax, const UIN * brp, FPT * y )
 {
 	const UIN tidGRID = blockIdx.x * blockDim.x + threadIdx.x;
 	const UIN widGRID = tidGRID >> 5;
-	const UIN tidWARP = tidGRID & 31;
-	const UIN p1      = brp[widGRID]   + tidWARP;
-	const UIN p2      = brp[widGRID+1] + tidWARP;
-	      UIN pAX;
-	      FPT val = 0.0, red = 0.0;
-	for ( pAX = p1; pAX < p2; pAX = pAX + 64 )
+	if ( widGRID < NROWS )
 	{
-		val = ax[pAX] * ax[pAX+32];
-		val = val + __shfl_down_sync( FULL_MASK, val, 16 );
-		val = val + __shfl_down_sync( FULL_MASK, val,  8 );
-		val = val + __shfl_down_sync( FULL_MASK, val,  4 );
-		val = val + __shfl_down_sync( FULL_MASK, val,  2 );
-		val = val + __shfl_down_sync( FULL_MASK, val,  1 );
-		red = red + val;
+		const UIN tidWARP = tidGRID & 31;
+		const UIN p1      = brp[widGRID]   + tidWARP;
+		const UIN p2      = brp[widGRID+1] + tidWARP;
+		      UIN pAX;
+		      FPT val = 0.0, red = 0.0;
+		for ( pAX = p1; pAX < p2; pAX = pAX + 64 )
+		{
+			val = ax[pAX] * ax[pAX+32];
+			val = val + __shfl_down_sync( FULL_MASK, val, 16 );
+			val = val + __shfl_down_sync( FULL_MASK, val,  8 );
+			val = val + __shfl_down_sync( FULL_MASK, val,  4 );
+			val = val + __shfl_down_sync( FULL_MASK, val,  2 );
+			val = val + __shfl_down_sync( FULL_MASK, val,  1 );
+			red = red + val;
+		}
+		if (tidWARP == 0) y[widGRID] = red;
 	}
-	if (tidWARP == 0) y[widGRID] = red;
 	return;
 }
 
@@ -1082,8 +1085,11 @@ static __host__ str_res test_gaxc( const UIN cudaBlockSize, const str_matAXC mat
 	UIN * d_brp;   HANDLE_CUDA_ERROR( cudaMalloc( &d_brp,   matAXC.lenBRP               * sizeof(UIN) ) ); TEST_POINTER( d_brp   );
 	FPT * d_res;   HANDLE_CUDA_ERROR( cudaMalloc( &d_res,   matAXC.nrows                * sizeof(FPT) ) ); TEST_POINTER( d_res   );
 	// copy necessary arrays to device
-	HANDLE_CUDA_ERROR( cudaMemcpy( d_ax,    matAXC.ax,    matAXC.lenAX                  * sizeof(FPT), cudaMemcpyHostToDevice ) );
-	HANDLE_CUDA_ERROR( cudaMemcpy( d_brp,   matAXC.brp,   matAXC.lenBRP                 * sizeof(UIN), cudaMemcpyHostToDevice ) );
+	HANDLE_CUDA_ERROR( cudaMemset( d_ax,  0, matAXC.lenAX  * sizeof(FPT) ) );
+	HANDLE_CUDA_ERROR( cudaMemset( d_brp, 0, matAXC.lenBRP * sizeof(UIN) ) );
+	HANDLE_CUDA_ERROR( cudaMemset( d_res, 0, matAXC.nrows  * sizeof(FPT) ) );
+	HANDLE_CUDA_ERROR( cudaMemcpy( d_ax,    matAXC.ax,    matAXC.lenAX  * sizeof(FPT), cudaMemcpyHostToDevice ) );
+	HANDLE_CUDA_ERROR( cudaMemcpy( d_brp,   matAXC.brp,   matAXC.lenBRP * sizeof(UIN), cudaMemcpyHostToDevice ) );
 	// create events for time measuring
 	cudaEvent_t cet1; HANDLE_CUDA_ERROR( cudaEventCreate( &cet1 ) );
 	cudaEvent_t cet2; HANDLE_CUDA_ERROR( cudaEventCreate( &cet2 ) );
@@ -1093,7 +1099,7 @@ static __host__ str_res test_gaxc( const UIN cudaBlockSize, const str_matAXC mat
 	for ( i = 0; i < NUM_ITE; i++ )
 	{
 		HANDLE_CUDA_ERROR( cudaEventRecord( cet1 ) );
-		gaxc <<<cudaBlockNum, cudaBlockSize>>> ( d_ax, d_brp, d_res );
+		gaxc <<<cudaBlockNum, cudaBlockSize>>> ( matAXC.nrows, d_ax, d_brp, d_res );
 		HANDLE_CUDA_ERROR( cudaEventRecord( cet2 ) );
 		HANDLE_CUDA_ERROR( cudaEventSynchronize( cet2 ) );
 		HANDLE_CUDA_ERROR( cudaEventElapsedTime( &ti, cet1, cet2 ) );
