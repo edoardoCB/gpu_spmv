@@ -573,6 +573,7 @@ static __host__ str_res test_gcsr( const UIN cudaBlockSize, const str_matCSR mat
 	str_res sr;
 	strcpy( sr.name, "gcsr" );
 	sr.et    = ( (double) tt / (double) NUM_ITE ) * 1e-3;
+	sr.ot    = 0.0;
 	sr.flops = ( 2.0 * ( (double) matCSR.nnz ) ) / sr.et;
 	get_errors( matCSR.nrows, ref, res, &(sr.sErr) );
 	// free cpu memory
@@ -675,6 +676,7 @@ static __host__ str_res test_gcucsr( const str_matCSR matCSR, const FPT * vec, c
 	str_res sr;
 	strcpy( sr.name, "gcucsr" );
 	sr.et    = ( (double) tt / (double) NUM_ITE ) * 1e-3;
+	sr.ot    = 0.0;
 	sr.flops = ( (double) matCSR.nnz * 2.0 ) / sr.et;
 	get_errors( matCSR.nrows, ref, res, &(sr.sErr) );
 	// free cpu memory
@@ -899,6 +901,7 @@ static __host__ str_res test_gk1( const UIN cudaBlockSize, const str_matK1 matK1
 	str_res sr;
 	strcpy( sr.name, "gk1" );
 	sr.et    = ( (double) tt / (double) NUM_ITE ) * 1e-3;
+	sr.ot    = 0.0;
 	sr.flops = ( 2.0 * ( (double) matK1.nnz ) ) / sr.et;
 	get_errors( matK1.nrows, ref, res, &(sr.sErr) );
 	// free cpu memory
@@ -1078,8 +1081,7 @@ static __global__ void gaxc( const UIN NROWS, const FPT * ax, const UIN * brp, F
 static __host__ str_res test_gaxc( const UIN cudaBlockSize, const str_matAXC matAXC, const FPT * ref )
 {
 	// 
-	UIN cudaBlockNum = matAXC.nrows * 32;
-	    cudaBlockNum = ( cudaBlockNum + cudaBlockSize - 1 ) / cudaBlockSize;
+	const UIN cudaBlockNum = ( (matAXC.nrows * 32) + cudaBlockSize - 1 ) / cudaBlockSize;
 	// allocate memory on GPU
 	FPT * d_ax;    HANDLE_CUDA_ERROR( cudaMalloc( &d_ax,    matAXC.lenAX                * sizeof(FPT) ) ); TEST_POINTER( d_ax    );
 	UIN * d_brp;   HANDLE_CUDA_ERROR( cudaMalloc( &d_brp,   matAXC.lenBRP               * sizeof(UIN) ) ); TEST_POINTER( d_brp   );
@@ -1119,6 +1121,7 @@ static __host__ str_res test_gaxc( const UIN cudaBlockSize, const str_matAXC mat
 	str_res sr;
 	strcpy( sr.name, "gaxc" );
 	sr.et    = ( (double) tt / (double) NUM_ITE ) * 1e-3;
+	sr.ot    = 0.0;
 	sr.flops = ( 2.0 * ( (double) matAXC.nnz ) ) / sr.et;
 	get_errors( matAXC.nrows, ref, res, &(sr.sErr) );
 	// free cpu memory
@@ -1128,11 +1131,12 @@ static __host__ str_res test_gaxc( const UIN cudaBlockSize, const str_matAXC mat
 
 
 
-/*
+
 typedef struct{ UIN nrows; UIN nnz; char mode[8]; UIN tileHW; UIN tileH; UIN logTH; UIN tileN; UIN lenAX; UIN lenSEC; UIN lenCON; UIN log; UIN bs; FPT * ax; UIN * sec; UIN * con; } str_matAXT;
 
 
 
+/*
 static void getArraysLenAXT( const str_matCSR matCSR, str_matAXT * matAXT )
 {
 	const UIN  nrows = matAXT->nrows;
@@ -1164,6 +1168,7 @@ static void getArraysLenAXT( const str_matCSR matCSR, str_matAXT * matAXT )
 	else                                            matAXT->lenSEC = totalTiles * ths;
 	return;
 }
+*/
 
 
 
@@ -1183,6 +1188,32 @@ static void getArraysLenAXT_UNC_H1( const str_matCSR matCSR, str_matAXT * matAXT
 	matAXT->tileN  = totalTiles;
 	matAXT->lenAX  = totalTiles * ts;
 	matAXT->lenSEC = totalTiles;
+	return;
+}
+
+
+
+static void getArraysLenAXT_UNC( const str_matCSR matCSR, str_matAXT * matAXT )
+{
+	const UIN  nrows = matAXT->nrows;
+	const UIN    thw = matAXT->tileHW;
+	const UIN     th = matAXT->tileH;
+	const UIN    ths = thw * th;
+	      UIN rid, rowStartPos = 0, tid, fid, cid, positions, totalColumns = 0, totalTiles;
+	for ( rid = 0; rid < nrows; rid++ )
+	{
+		             tid = ( (rowStartPos + ths) / ths ) - 1;
+		             fid =    rowStartPos % th;
+		             cid = ( (rowStartPos + th) / th ) - 1 - (tid * thw);
+		matAXT->con[rid] = tid * (2 * ths) + fid * (2 * thw) + cid;
+		       positions = ( ( ( matCSR.rl[rid] + th - 1 ) / th ) * th );
+		    totalColumns = totalColumns + ( ( positions + th - 1 ) / th );
+		     rowStartPos = rowStartPos + positions;
+	}
+	totalTiles     = ( totalColumns + thw - 1 ) / thw;
+	matAXT->tileN  = totalTiles;
+	matAXT->lenAX  = totalTiles * 2 * ths;
+	matAXT->lenSEC = totalTiles * thw;
 	return;
 }
 
@@ -1375,17 +1406,6 @@ static void getArraysAxSecAXT_COM( const UIN ompNT, str_matCSR matCSR, const FPT
 
 
 
-static void fill_array_uin( const UIN ompNT, const UIN len, const UIN value, UIN * array )
-{
-	UIN i;
-	#pragma omp parallel for default(shared) private(i) num_threads(ompNT) schedule(OMP_SCH) if(_OPENMP)
-	for( i = 0; i < len; i++ )
-	array[i] = value;
-	return;
-}
-
-
-
 static str_formatData getFormatDataAXT( const UIN ompNT, const UIN bs, const UIN thw, const UIN th, const char * mode, const str_matCSR matCSR, const FPT * vec, str_matAXT * matAXT )
 {
 	// set AXT parameters
@@ -1421,7 +1441,7 @@ static str_formatData getFormatDataAXT( const UIN ompNT, const UIN bs, const UIN
 			for ( i = 0; i < NUM_ITE; i++ )
 			{
 				GT( t1 );
-				getArraysLenAXT( matCSR, matAXT );
+				getArraysLenAXT_UNC( matCSR, matAXT );
 				GT( t2 );
 				ti = measure_time( t2, t1 );
 				tt = tt + ti;
@@ -1456,8 +1476,8 @@ static str_formatData getFormatDataAXT( const UIN ompNT, const UIN bs, const UIN
 	ti = tt / (double) NUM_ITE;
 	tc = tc + ti;
 	// get arrays ax[] and sec[]
-	matAXT->ax  = (FPT *) _mm_malloc( matAXT->lenAX  * sizeof(FPT), 64 );  TEST_POINTER( matAXT->ax  ); fill_array    ( ompNT, matAXT->lenAX,  0.0, matAXT->ax  );
-	matAXT->sec = (UIN *) _mm_malloc( matAXT->lenSEC * sizeof(UIN), 64 );  TEST_POINTER( matAXT->sec ); fill_array_uin( ompNT, matAXT->lenSEC,   0, matAXT->sec );
+	matAXT->ax  = (FPT *) calloc( matAXT->lenAX,  sizeof(FPT) );  TEST_POINTER( matAXT->ax  );
+	matAXT->sec = (UIN *) calloc( matAXT->lenSEC, sizeof(UIN) );  TEST_POINTER( matAXT->sec );
 	tt = 0.0;
 	char buffer[48];
 	if (strcmp(mode,"UNC")==0)
@@ -1473,7 +1493,7 @@ static str_formatData getFormatDataAXT( const UIN ompNT, const UIN bs, const UIN
 				tt = tt + ti;
 			}
 			char THW[5]; sprintf( THW, "%d", thw );
-			strcpy( buffer, "f_axt_unc_h1_hw" );
+			strcpy( buffer, "faxtuh1hw" );
 			strcat( buffer, THW );
 		}
 		else
@@ -1488,9 +1508,9 @@ static str_formatData getFormatDataAXT( const UIN ompNT, const UIN bs, const UIN
 			}
 			char TH[5];  sprintf( TH,  "%d", th  );
 			char THW[5]; sprintf( THW, "%d", thw );
-			strcpy( buffer, "f_axt_unc_h" );
+			strcpy( buffer, "faxtuh" );
 			strcat( buffer, TH );
-			strcat( buffer, "_hw" );
+			strcat( buffer, "hw" );
 			strcat( buffer, THW );
 		}
 	}
@@ -1516,9 +1536,9 @@ static str_formatData getFormatDataAXT( const UIN ompNT, const UIN bs, const UIN
 			}
 			char THW[5]; sprintf( THW, "%d", thw );
 			char BS[5];  sprintf( BS, "%d", bs );
-			strcpy( buffer, "f_axt_com_h1_hw" );
+			strcpy( buffer, "faxtch1hw" );
 			strcat( buffer, THW );
-			strcat( buffer, "_bs" );
+			strcat( buffer, "bs" );
 			strcat( buffer, BS );
 		}
 		else
@@ -1541,524 +1561,103 @@ static str_formatData getFormatDataAXT( const UIN ompNT, const UIN bs, const UIN
 			}
 			char TH[5];  sprintf( TH,  "%d", th  );
 			char THW[5]; sprintf( THW, "%d", thw );
-			strcpy( buffer, "f_axt_com_h" );
+			strcpy( buffer, "faxtch" );
 			strcat( buffer, TH );
-			strcat( buffer, "_hw" );
+			strcat( buffer, "hw" );
 			strcat( buffer, THW );
 		}
 	}
 	ti = tt / (double) NUM_ITE;
 	tc = tc + ti;
-	// AXTC specific name
+	// AXT specific name
 	str_formatData fd;
 	strcpy( fd.name, buffer );
-	// AXTC memory footprint
+	// AXT memory footprint
 	fd.mfp =          (double) ( matAXT->lenAX  * sizeof(FPT) ); // ax
 	fd.mfp = fd.mfp + (double) ( matAXT->lenSEC * sizeof(UIN) ); // sec
-	// AXTC occupancy ( beta )
+	// AXT occupancy ( beta )
 	fd.beta = ( (double) matAXT->nnz / (double) (matAXT->lenAX >> 1) );
-	// AXTC conversion time
+	// AXT conversion time
 	fd.ct = tc;
 	return( fd );
 }
 
 
 
-static void int_axt_unc_h1( const UIN ompNT, const UIN tn, const UIN thw, const FPT * ax, const UIN * rwp, FPT * y )
+static __global__ void gaxtuh1( const UIN TN, const FPT * ax, const UIN * rwp, FPT * y )
 {
-	const UIN stride = 2 * thw;
-	      UIN tid, posAX, rowID;
-	      FPT red;
-	  __m512d vtMat, vtVec, vtPro;
-	#pragma omp parallel for default(shared) private(tid,posAX,vtMat,vtVec,vtPro,red,rowID) num_threads(ompNT) schedule(OMP_SCH) if(_OPENMP)
-	for ( tid = 0; tid < tn; tid++ )
+	const UIN tidGRID = blockIdx.x * blockDim.x + threadIdx.x;
+	const UIN widGRID = tidGRID >> 5;
+	if ( widGRID < TN )
 	{
-		posAX    = tid * stride;
-		vtMat    = _mm512_load_pd( &ax[posAX]       );
-		vtVec    = _mm512_load_pd( &ax[posAX + thw] );
-		vtPro    = _mm512_mul_pd( vtMat, vtVec );
-		red      = _mm512_reduce_add_pd( vtPro );
-		rowID    = rwp[tid];
-		#pragma omp atomic
-		y[rowID] = y[rowID] + red;
+		const UIN tidWARP = tidGRID & 31;
+		const UIN rid     = rwp[widGRID];
+		const UIN pAX     = widGRID * 64 + tidWARP;
+		      FPT val;
+		val = ax[pAX] * ax[pAX+32];
+		val = val + __shfl_down_sync( FULL_MASK, val, 16 );
+		val = val + __shfl_down_sync( FULL_MASK, val,  8 );
+		val = val + __shfl_down_sync( FULL_MASK, val,  4 );
+		val = val + __shfl_down_sync( FULL_MASK, val,  2 );
+		val = val + __shfl_down_sync( FULL_MASK, val,  1 );
+		if (tidWARP == 0)  atomicAdd( &y[rid], val );
 	}
 	return;
 }
 
 
 
-static str_res test_int_axt_unc_h1( const UIN ompNT, const str_matAXT matAXT, const FPT * ref )
+static __host__ str_res test_gaxtuh1( const UIN cudaBlockSize, const str_matAXT matAXT, const FPT * ref )
 {
-	//
-	const UIN tileN  = matAXT.tileN;
-	const UIN tileHW = matAXT.tileHW;
-	const UIN nrows  = matAXT.nrows;
-	const UIN nnz    = matAXT.nnz;
+	// 
+	const UIN tn           = matAXT.tileN;
+	const UIN cudaBlockNum = ( (tn*32) + cudaBlockSize - 1 ) / cudaBlockSize;
+	// allocate memory on GPU
+	FPT * d_ax;    HANDLE_CUDA_ERROR( cudaMalloc( &d_ax,    matAXT.lenAX   * sizeof(FPT) ) ); TEST_POINTER( d_ax    );
+	UIN * d_rwp;   HANDLE_CUDA_ERROR( cudaMalloc( &d_rwp,   matAXT.lenSEC  * sizeof(UIN) ) ); TEST_POINTER( d_rwp   );
+	FPT * d_res;   HANDLE_CUDA_ERROR( cudaMalloc( &d_res,   matAXT.nrows   * sizeof(FPT) ) ); TEST_POINTER( d_res   );
+	// copy necessary arrays to device
+	HANDLE_CUDA_ERROR( cudaMemcpy( d_ax,    matAXT.ax,    matAXT.lenAX  * sizeof(FPT), cudaMemcpyHostToDevice ) );
+	HANDLE_CUDA_ERROR( cudaMemcpy( d_rwp,   matAXT.sec,   matAXT.lenSEC * sizeof(UIN), cudaMemcpyHostToDevice ) );
+	// create events for time measuring
+	cudaEvent_t cet1; HANDLE_CUDA_ERROR( cudaEventCreate( &cet1 ) );
+	cudaEvent_t cet2; HANDLE_CUDA_ERROR( cudaEventCreate( &cet2 ) );
 	// timed iterations
-	double ti = 0.0, tt = 0.0;
-	struct timespec t1, t2;
-	FPT * res = (FPT *) calloc( nrows, sizeof(FPT) ); TEST_POINTER( res );
+	float ti = 0.0f, tt = 0.0f;
 	UIN i;
 	for ( i = 0; i < NUM_ITE; i++ )
 	{
-		fill_array( ompNT, nrows, 0, res );
-		GT( t1 );
-		int_axt_unc_h1( ompNT, tileN, tileHW, matAXT.ax, matAXT.sec, res );
-		GT( t2 );
-		ti = measure_time( t2, t1 );
+		HANDLE_CUDA_ERROR( cudaMemset( d_res, 0, matAXT.nrows  * sizeof(FPT) ) );
+		HANDLE_CUDA_ERROR( cudaEventRecord( cet1 ) );
+		gaxtuh1 <<<cudaBlockNum, cudaBlockSize>>> ( tn, d_ax, d_rwp, d_res );
+		HANDLE_CUDA_ERROR( cudaEventRecord( cet2 ) );
+		HANDLE_CUDA_ERROR( cudaEventSynchronize( cet2 ) );
+		HANDLE_CUDA_ERROR( cudaEventElapsedTime( &ti, cet1, cet2 ) );
 		tt = tt + ti;
 	}
-	char THW[5]; sprintf( THW, "%d", tileHW );
-	char buffer[48];
-	strcpy( buffer, "p_axt_unc_h1_hw" );
-	strcat( buffer, THW );
+	// destroy events for time measuring
+	HANDLE_CUDA_ERROR( cudaEventDestroy( cet1 ) );
+	HANDLE_CUDA_ERROR( cudaEventDestroy( cet2 ) );
+	// copy result from device
+	FPT * res = (FPT *) malloc( matAXT.nrows * sizeof(FPT) ); TEST_POINTER( res );
+	HANDLE_CUDA_ERROR( cudaMemcpy( res, d_res, matAXT.nrows * sizeof(FPT), cudaMemcpyDeviceToHost ) );
+	// free device memory
+	HANDLE_CUDA_ERROR( cudaFree( d_ax    ) );
+	HANDLE_CUDA_ERROR( cudaFree( d_rwp   ) );
+	HANDLE_CUDA_ERROR( cudaFree( d_res   ) );
 	// store results
 	str_res sr;
-	strcpy( sr.name, buffer );
-	sr.et    = tt / (double) NUM_ITE;
+	strcpy( sr.name, "gaxtuh1" );
+	sr.et    = ( (double) tt / (double) NUM_ITE ) * 1e-3;
 	sr.ot    = 0.0;
-	sr.flops = ( 2.0 * ( (double) nnz ) ) / sr.et;
-	get_errors( nrows, ref, res, &(sr.sErr) );
+	sr.flops = ( 2.0 * ( (double) matAXT.nnz ) ) / sr.et;
+	get_errors( matAXT.nrows, ref, res, &(sr.sErr) );
+	// free cpu memory
 	free( res );
 	return( sr );
 }
 
 
-static void int_axt_unc( const UIN ompNT, const UIN tn, const UIN th, const UIN thw, const FPT * ax, const UIN * rwp, FPT * y )
-{
-	const UIN stride = 2 * thw;
-	const UIN ts     = th * stride;
-	      UIN tid, posAX, posRWP, rowID, i;
-	      FPT tmp[thw];
-	      FPT red;
-	  __m512d vtMat, vtVec, vtPro, vtSum;
-	  __m512i vtRid;
-	#pragma omp parallel for default(shared) private(tid,vtSum,posAX,vtMat,vtVec,vtPro,tmp,i,posRWP,rowID) num_threads(ompNT) schedule(OMP_SCH) if(_OPENMP)
-	for ( tid = 0; tid < tn; tid++ )
-	{
-		vtSum = _mm512_setzero_pd();
-		for ( posAX = tid * ts; posAX < (tid + 1) * ts; posAX = posAX + stride )
-		{
-			vtMat = _mm512_load_pd( &ax[posAX]       );
-			vtVec = _mm512_load_pd( &ax[posAX + thw] );
-			vtPro = _mm512_mul_pd( vtMat, vtVec );
-			vtSum = _mm512_add_pd( vtSum, vtPro );
-		}
-		_mm512_store_pd( tmp, vtSum );
-		for ( i = 0, posRWP = tid * thw; i < thw; i++, posRWP++ )
-		{
-			rowID    = rwp[posRWP];
-			y[rowID] = y[rowID] + tmp[i];
-		}
-	}
-	return;
-}
-
-
-
-static str_res test_int_axt_unc( const UIN ompNT, const str_matAXT matAXT, const FPT * ref )
-{
-	//
-	const UIN tileNum = matAXT.tileN;
-	const UIN tileH   = matAXT.tileH;
-	const UIN tileHW  = matAXT.tileHW;
-	const UIN nrows   = matAXT.nrows;
-	const UIN nnz     = matAXT.nnz;
-	// timed iterations
-	double ti = 0.0, tt = 0.0;
-	struct timespec t1, t2;
-	FPT * res = (FPT *) _mm_malloc( nrows * sizeof(FPT), 64 ); TEST_POINTER( res );
-	UIN i;
-	for ( i = 0; i < NUM_ITE; i++ )
-	{
-		fill_array( ompNT, nrows, 0, res );
-		GT( t1 );
-		int_axt_unc( ompNT, tileNum, tileH, tileHW, matAXT.ax, matAXT.sec, res );
-		GT( t2 );
-		ti = measure_time( t2, t1 );
-		tt = tt + ti;
-	}
-	char TH[5];      sprintf( TH,   "%d", tileH  );
-	char THW[5];     sprintf( THW,  "%d", tileHW );
-	char buffer[48]; strcpy( buffer, "p_axt_unc_h" );
-	strcat( buffer, TH );
-	strcat( buffer, "_hw" );
-	strcat( buffer, THW );
-	// store results
-	str_res sr;
-	strcpy( sr.name, buffer );
-	sr.et    = tt / (double) NUM_ITE;
-	sr.ot    = 0.0;
-	sr.flops = ( 2.0 * ( (double) nnz ) ) / sr.et;
-	get_errors( nrows, ref, res, &(sr.sErr) );
-	_mm_free( res );
-	return( sr );
-}
-
-
-
-static __m512d inc_scan8( __m512d vtVal )
-{
-	__m512i  vtIdx = _mm512_set_epi64( 6, 6, 4, 4, 2, 2, 0, 0 );
-	__m512d  vtAux = _mm512_permutexvar_pd( vtIdx, vtVal );
-	__mmask8 cmask = 0xAA;
-	__m512d  vtRed = _mm512_mask_add_pd( vtVal, cmask, vtVal, vtAux );
-	         vtIdx = _mm512_set_epi64( 5, 6, 5, 4, 1, 2, 1, 0 );
-	         vtAux = _mm512_permutexvar_pd( vtIdx, vtRed );
-	         cmask = 0x88;
-	         vtRed = _mm512_mask_add_pd( vtRed, cmask, vtRed, vtAux );
-	         vtIdx = _mm512_set_epi64( 3, 6, 5, 4, 3, 2, 1, 0 );
-	         vtAux = _mm512_permutexvar_pd( vtIdx, vtRed );
-	         cmask = 0x80;
-	         vtRed = _mm512_mask_add_pd( vtRed, cmask, vtRed, vtAux );
-	         vtIdx = _mm512_set_epi64( 7, 6, 3, 4, 3, 2, 1, 0 );
-	         vtAux = _mm512_permutexvar_pd( vtIdx, vtRed );
-	         cmask = 0x20;
-	         vtRed = _mm512_mask_add_pd( vtRed, cmask, vtRed, vtAux );
-	         vtIdx = _mm512_set_epi64( 7, 5, 5, 3, 3, 1, 1, 0 );
-	         vtAux = _mm512_permutexvar_pd( vtIdx, vtRed );
-	         cmask = 0x54;
-	         vtRed = _mm512_mask_add_pd( vtRed, cmask, vtRed, vtAux );
-	return( vtRed );
-}
-
-
-
-static void int_axt_com_h1_bs64( const UIN ompNT, const UIN bn, const UIN lenRWP, const FPT * ax, const UIN * rwp, FPT * y )
-{
-	      UIN bid, blkOff, tid, posAX, posBLK, ep, ro, r, o;
-	  __m512d vtMat, vtVec, vtVal, vtRed, vtAcu;
-	      FPT v;
-	      FPT blk1[64];
-	      FPT blk2[64];
-	      FPT blk3[8];
-	#pragma omp parallel for default(shared) private(bid,blkOff,tid,posAX,posBLK,ep,ro,r,o,vtMat,vtVec,vtVal,vtRed,vtAcu,v,blk1,blk2,blk3) num_threads(ompNT) schedule(OMP_SCH) if(_OPENMP)
-	for ( bid = 0; bid < bn; bid++ )
-	{
-		blkOff = bid * 128;
-		for ( tid = 0; tid < 8; tid++ )
-		{
-			posAX     = blkOff + tid * 16;
-			vtMat     = _mm512_load_pd( &ax[posAX]     );
-			vtVec     = _mm512_load_pd( &ax[posAX + 8] );
-			vtVal     = _mm512_mul_pd( vtMat, vtVec );
-			posBLK    = tid *  8;
-			_mm512_store_pd( &blk1[posBLK], vtVal );
-			vtRed     = inc_scan8( vtVal );
-			_mm512_store_pd( &blk2[posBLK], vtRed );
-			blk3[tid] = blk2[posBLK+7];
-		}
-		vtVal = _mm512_load_pd( blk3 );
-		vtRed = inc_scan8( vtVal );
-		_mm512_store_pd( blk3, vtRed );
-		for ( tid = 1; tid < 8; tid++ )
-		{
-			posBLK = tid * 8;
-			vtAcu  = _mm512_set1_pd( blk3[tid-1]   );
-			vtVal  = _mm512_load_pd( &blk2[posBLK] );
-			vtRed  = _mm512_add_pd( vtAcu, vtVal );
-			_mm512_store_pd( &blk2[posBLK], vtRed );
-		}
-		blkOff = bid * 64;
-		ep     = blkOff + 64;
-		ep     = (ep>lenRWP) ? lenRWP : ep ;
-		#pragma omp parallel for default(shared) private(posBLK,tid,ro,r,o,v) num_threads(ompNT) schedule(OMP_SCH) if(_OPENMP)
-		for ( posBLK = blkOff, tid = 0; posBLK < ep; posBLK++, tid++ )
-		{
-			ro = rwp[posBLK];
-			if (ro!=0)
-			{
-				r = ro >> 6;
-				o = ro & 63;
-				v = blk2[tid+o] - blk2[tid] + blk1[tid];
-				#pragma omp atomic
-				y[r] = y[r] + v;
-			}
-		}
-	}
-	return;
-}
-
-
-
-static void int_axt_com_h1_bs512( const UIN ompNT, const UIN bn, const UIN lenRWP, const FPT * ax, const UIN * rwp, FPT * y )
-{
-	      UIN bid, blkOff, tid, posAX, posBLK, ep, ro, r, o;
-	  __m512d vtMat, vtVec, vtVal, vtRed, vtAcu;
-	      FPT v;
-	      FPT blk1[512];
-	      FPT blk2[512];
-	      FPT blk3[64];
-	      FPT blk4[8];
-	#pragma omp parallel for default(shared) private(bid,blkOff,tid,posAX,posBLK,ep,ro,r,o,vtMat,vtVec,vtVal,vtRed,vtAcu,v,blk1,blk2,blk3,blk4) num_threads(ompNT) schedule(OMP_SCH) if(_OPENMP)
-	for ( bid = 0; bid < bn; bid++ )
-	{
-		blkOff = bid * 1024;
-		for ( tid = 0; tid < 64; tid++ )
-		{
-			posAX     = blkOff + tid * 16;
-			vtMat     = _mm512_load_pd( &ax[posAX]     );
-			vtVec     = _mm512_load_pd( &ax[posAX + 8] );
-			vtVal     = _mm512_mul_pd( vtMat, vtVec );
-			posBLK    = tid *  8;
-			_mm512_store_pd( &blk1[posBLK], vtVal );
-			vtRed     = inc_scan8( vtVal );
-			_mm512_store_pd( &blk2[posBLK], vtRed );
-			blk3[tid] = blk2[posBLK+7];
-		}
-		for ( tid = 0; tid < 8; tid++ )
-		{
-			posBLK  = tid *  8;
-			vtVal   = _mm512_load_pd( &blk3[posBLK] );
-			vtRed   = inc_scan8( vtVal );
-			_mm512_store_pd( &blk3[posBLK], vtRed );
-			blk4[tid] = blk3[posBLK+7];
-		}
-		vtVal = _mm512_load_pd( blk4 );
-		vtRed = inc_scan8( vtVal );
-		_mm512_store_pd( blk4, vtRed );
-		for ( tid = 1; tid < 8; tid++ )
-		{
-			posBLK = tid * 8;
-			vtAcu  = _mm512_set1_pd( blk4[tid-1]   );
-			vtVal  = _mm512_load_pd( &blk3[posBLK] );
-			vtRed  = _mm512_add_pd( vtAcu, vtVal );
-			_mm512_store_pd( &blk3[posBLK], vtRed );
-		}
-		for ( tid = 1; tid < 64; tid++ )
-		{
-			posBLK = tid * 8;
-			vtAcu  = _mm512_set1_pd( blk3[tid-1]   );
-			vtVal  = _mm512_load_pd( &blk2[posBLK] );
-			vtRed  = _mm512_add_pd( vtAcu, vtVal );
-			_mm512_store_pd( &blk2[posBLK], vtRed );
-		}
-		blkOff = bid * 512;
-		ep     = blkOff + 512;
-		ep     = (ep>lenRWP) ? lenRWP : ep ;
-		#pragma omp parallel for default(shared) private(posBLK,tid,ro,r,o,v) num_threads(ompNT) schedule(OMP_SCH) if(_OPENMP)
-		for ( posBLK = blkOff, tid = 0; posBLK < ep; posBLK++, tid++ )
-		{
-			ro = rwp[posBLK];
-			if (ro!=0)
-			{
-				r = ro >> 9;
-				o = ro & 511;
-				v = blk2[tid+o] - blk2[tid] + blk1[tid];
-				#pragma omp atomic
-				y[r] = y[r] + v;
-			}
-		}
-	}
-	return;
-}
-
-
-
-
-
-static str_res test_int_axt_com_h1_bs64( const UIN ompNT, const str_matAXT matAXT, const FPT * ref )
-{
-	//
-	const UIN nrows  = matAXT.nrows;
-	const UIN nnz    = matAXT.nnz;
-	const UIN lenAX  = matAXT.lenAX;
-	const UIN lenSEC = matAXT.lenSEC;
-	const UIN log    = matAXT.log;
-	const UIN tn     = matAXT.tileN;
-	const UIN thw    = matAXT.tileHW;
-	const UIN bs     = matAXT.bs;
-	const UIN ts     = 2 * thw;
-	const UIN bn     = ( (tn * thw) + bs - 1 ) / bs;
-	const UIN tpb    = bs / thw;
-	FPT * res = (FPT *) _mm_malloc( nrows   * sizeof(FPT), 64 ); TEST_POINTER( res );
-	// timed iterations
-	double ti = 0.0, tt = 0.0;
-	struct timespec t1, t2;
-	UIN i;
-	const UIN newLenAX  = 2 * bn * bs; FPT * ax  = (FPT *) _mm_malloc( newLenAX  * sizeof(FPT), 64 ); TEST_POINTER( ax  );
-	const UIN newLenSEC =     bn * bs; UIN * sec = (UIN *)     calloc( newLenSEC, sizeof(UIN) );      TEST_POINTER( sec );
-	fill_array( ompNT, newLenAX, 0, ax );
-	cblas_dcopy( lenAX, matAXT.ax, 1, ax, 1 );
-	memcpy( sec, matAXT.sec, lenSEC * sizeof(UIN) );
-	for ( i = 0; i < NUM_ITE; i++ )
-	{
-		fill_array( ompNT, nrows, 0, res );
-		GT( t1 );
-		int_axt_com_h1_bs64( ompNT, bn, lenSEC, ax, sec, res );
-		GT( t2 );
-		ti = measure_time( t2, t1 );
-		tt = tt + ti;
-	}
-	_mm_free( ax );
-	free( sec );
-	// store results
-	char THW[5]; sprintf( THW, "%d", thw );
-	char BS[5];  sprintf( BS,  "%d", bs  );
-	char buffer[48];
-	strcpy( buffer, "p_axt_com_h1_hw" );
-	strcat( buffer, THW );
-	strcat( buffer, "_bs" );
-	strcat( buffer, BS );
-	// store results
-	str_res sr;
-	strcpy( sr.name, buffer );
-	sr.et    = tt / (double) NUM_ITE;
-	sr.ot    = 0.0;
-	sr.flops = ( 2.0 * ( (double) nnz ) ) / sr.et;
-	get_errors( nrows, ref, res, &(sr.sErr) );
-	_mm_free( res );
-	return( sr );
-}
-
-
-
-static str_res test_int_axt_com_h1_bs512( const UIN ompNT, const str_matAXT matAXT, const FPT * ref )
-{
-	//
-	const UIN nrows  = matAXT.nrows;
-	const UIN nnz    = matAXT.nnz;
-	const UIN lenAX  = matAXT.lenAX;
-	const UIN lenSEC = matAXT.lenSEC;
-	const UIN log    = matAXT.log;
-	const UIN tn     = matAXT.tileN;
-	const UIN thw    = matAXT.tileHW;
-	const UIN bs     = matAXT.bs;
-	const UIN ts     = 2 * thw;
-	const UIN bn     = ( (tn * thw) + bs - 1 ) / bs;
-	const UIN tpb    = bs / thw;
-	FPT * res = (FPT *) _mm_malloc( nrows   * sizeof(FPT), 64 ); TEST_POINTER( res );
-	// timed iterations
-	double ti = 0.0, tt = 0.0;
-	struct timespec t1, t2;
-	UIN i;
-	const UIN newLenAX  = 2 * bn * bs; FPT * ax  = (FPT *) _mm_malloc( newLenAX  * sizeof(FPT), 64 ); TEST_POINTER( ax  );
-	const UIN newLenSEC =     bn * bs; UIN * sec = (UIN *)     calloc( newLenSEC, sizeof(UIN) );      TEST_POINTER( sec );
-	fill_array( ompNT, newLenAX, 0, ax );
-	cblas_dcopy( lenAX, matAXT.ax, 1, ax, 1 );
-	memcpy( sec, matAXT.sec, lenSEC * sizeof(UIN) );
-	for ( i = 0; i < NUM_ITE; i++ )
-	{
-		fill_array( ompNT, nrows, 0, res );
-		GT( t1 );
-		int_axt_com_h1_bs512( ompNT, bn, lenSEC, ax, sec, res );
-		GT( t2 );
-		ti = measure_time( t2, t1 );
-		tt = tt + ti;
-	}
-	_mm_free( ax );
-	free( sec );
-	// store results
-	char THW[5]; sprintf( THW, "%d", thw );
-	char BS[5];  sprintf( BS,  "%d", bs  );
-	char buffer[48];
-	strcpy( buffer, "p_axt_com_h1_hw" );
-	strcat( buffer, THW );
-	strcat( buffer, "_bs" );
-	strcat( buffer, BS );
-	// store results
-	str_res sr;
-	strcpy( sr.name, buffer );
-	sr.et    = tt / (double) NUM_ITE;
-	sr.ot    = 0.0;
-	sr.flops = ( 2.0 * ( (double) nnz ) ) / sr.et;
-	get_errors( nrows, ref, res, &(sr.sErr) );
-	_mm_free( res );
-	return( sr );
-}
-
-
-
-static void int_axt_com( const UIN ompNT, const UIN tn, const UIN th, const UIN log, const UIN thw, const FPT * ax, const UIN * rwp, FPT * y )
-{
-	const UIN ths = th * thw;
-	const UIN ts  =  2 * ths;
-	      UIN tid, off, f, pAX, pBLK, ro, r, o;
-	  __m512d vtMat, vtVec, vtVal, vtAcu;
-	      FPT blk1[th*thw];
-	      FPT blk2[th*thw];
-	      FPT v;
-	#pragma omp parallel for default(shared) private(tid,off,f,pAX,pBLK,ro,r,o,vtMat,vtVec,vtVal,vtAcu,v,blk1,blk2) num_threads(ompNT) schedule(OMP_SCH) if(_OPENMP)
-	for ( tid = 0; tid < tn; tid++ )
-	{
-		off = tid * ts;
-		vtAcu = _mm512_setzero_pd();
-		for ( f = 0; f < th; f++ )
-		{
-			pAX   = off + f * 16;
-			vtMat = _mm512_load_pd( &ax[pAX]     );
-			vtVec = _mm512_load_pd( &ax[pAX + 8] );
-			vtVal = _mm512_mul_pd( vtMat, vtVec );
-			pBLK  = f * 8;
-			_mm512_store_pd( &blk1[pBLK], vtVal );
-			vtAcu = _mm512_add_pd( vtAcu, vtVal );
-			_mm512_store_pd( &blk2[pBLK], vtAcu );
-		}
-		off = tid * ths;
-		#pragma omp parallel for default(shared) private(f,ro,r,o,v) num_threads(ompNT) schedule(OMP_SCH) if(_OPENMP)
-		for ( f = 0; f < ths; f++ )
-		{
-			ro = rwp[off + f];
-			if (ro != 0)
-			{
-				r    = ro >> log;
-				o    = ro & (th-1);
-				v    = blk2[f+(o*thw)] - blk2[f] + blk1[f];
-				#pragma omp atomic
-				y[r] = y[r] + v;
-			}
-		}
-	}
-	return;
-}
-
-
-
-static str_res test_int_axt_com( const UIN ompNT, const str_matAXT matAXT, const FPT * ref )
-{
-	//
-	const UIN nrows  = matAXT.nrows;
-	const UIN nnz    = matAXT.nnz;
-	const UIN tn     = matAXT.tileN;
-	const UIN th     = matAXT.tileH;
-	const UIN thw    = matAXT.tileHW;
-	const UIN log    = matAXT.log;
-	FPT * res = (FPT *) _mm_malloc( nrows   * sizeof(FPT), 64 ); TEST_POINTER( res );
-	// timed iterations
-	double ti = 0.0, tt = 0.0;
-	struct timespec t1, t2;
-	UIN i;
-	for ( i = 0; i < NUM_ITE; i++ )
-	{
-		fill_array( ompNT, nrows, 0, res );
-		GT( t1 );
-		int_axt_com( ompNT, tn, th, log, thw, matAXT.ax, matAXT.sec, res );
-		GT( t2 );
-		ti = measure_time( t2, t1 );
-		tt = tt + ti;
-	}
-	// store results
-	char TH[5];  sprintf( TH,  "%d", th );
-	char THW[5]; sprintf( THW, "%d", thw );
-	char buffer[48];
-	strcpy( buffer, "p_axt_com_h" );
-	strcat( buffer, TH );
-	strcat( buffer, "_hw" );
-	strcat( buffer, THW );
-	// store results
-	str_res sr;
-	strcpy( sr.name, buffer );
-	sr.et    = tt / (double) NUM_ITE;
-	sr.ot    = 0.0;
-	sr.flops = ( 2.0 * ( (double) nnz ) ) / sr.et;
-	get_errors( nrows, ref, res, &(sr.sErr) );
-	_mm_free( res );
-	return( sr );
-}
-
-
-
-*/
 
 #endif
 
@@ -2119,9 +1718,11 @@ int main( int argc, char ** argv )
 	str_res sr05 = test_gaxc( sia.cbs, matAXC, yr );
 	// AXC format  ------------------------------------------------------------------------------------------------------------------
 
-/*
 	// AXT format  ------------------------------------------------------------------------------------------------------------------
-	str_matAXT matAXT1;  str_formatData fd04 = getFormatDataAXT( sia.ompMT,   64, 8,   1, "UNC", matCSR, vr, &matAXT1 );
+	str_matAXT matAXT1;  str_formatData fd04 = getFormatDataAXT( sia.ompMT,   64, 32,  1, "UNC", matCSR, vr, &matAXT1 );
+	str_res sr06 = test_gaxtuh1( sia.cbs, matAXT1, yr );
+	// AXT format  ------------------------------------------------------------------------------------------------------------------
+/*
 	str_matAXT matAXT2;  str_formatData fd05 = getFormatDataAXT( sia.ompMT,   64, 8,   4, "UNC", matCSR, vr, &matAXT2 );
 	str_matAXT matAXT3;  str_formatData fd06 = getFormatDataAXT( sia.ompMT,   64, 8,   8, "UNC", matCSR, vr, &matAXT3 );
 	str_matAXT matAXT4;  str_formatData fd07 = getFormatDataAXT( sia.ompMT,   64, 8,  12, "UNC", matCSR, vr, &matAXT4 );
@@ -2141,7 +1742,6 @@ int main( int argc, char ** argv )
 	str_matAXT matAXT18; str_formatData fd21 = getFormatDataAXT( sia.ompMT,   64, 8, 128, "COM", matCSR, vr, &matAXT18 );
 	str_matAXT matAXT19; str_formatData fd22 = getFormatDataAXT( sia.ompMT,   64, 8, 256, "COM", matCSR, vr, &matAXT19 );
 	str_matAXT matAXT20; str_formatData fd23 = getFormatDataAXT( sia.ompMT,   64, 8, 512, "COM", matCSR, vr, &matAXT20 );
-	str_res sr06 = test_int_axt_unc_h1( sia.ompMT, matAXT1, yr );
 	str_res sr07 = test_int_axt_unc( sia.ompMT, matAXT2, yr );
 	str_res sr08 = test_int_axt_unc( sia.ompMT, matAXT3, yr );
 	str_res sr09 = test_int_axt_unc( sia.ompMT, matAXT4, yr );
@@ -2161,14 +1761,13 @@ int main( int argc, char ** argv )
 	str_res sr23 = test_int_axt_com( sia.ompMT, matAXT18, yr );
 	str_res sr24 = test_int_axt_com( sia.ompMT, matAXT19, yr );
 	str_res sr25 = test_int_axt_com( sia.ompMT, matAXT20, yr );
-	// AXT format  ------------------------------------------------------------------------------------------------------------------
 */
 	HDL; printf( "formats' data\n" ); HDL;
 	printf( "%25s %20s %10s %20s\n", "format", "memory [Mbytes]", "occupancy", "convTime [s]" );
 	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd01.name, ( fd01.mfp * 1e-6 ), fd01.beta, fd01.ct ); fflush(stdout);
 	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd02.name, ( fd02.mfp * 1e-6 ), fd02.beta, fd02.ct ); fflush(stdout);
 	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd03.name, ( fd03.mfp * 1e-6 ), fd03.beta, fd03.ct ); fflush(stdout);
-//	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd04.name, ( fd04.mfp * 1e-6 ), fd04.beta, fd04.ct ); fflush(stdout);
+	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd04.name, ( fd04.mfp * 1e-6 ), fd04.beta, fd04.ct ); fflush(stdout);
 //	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd05.name, ( fd05.mfp * 1e-6 ), fd05.beta, fd05.ct ); fflush(stdout);
 //	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd06.name, ( fd06.mfp * 1e-6 ), fd06.beta, fd06.ct ); fflush(stdout);
 //	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd07.name, ( fd07.mfp * 1e-6 ), fd07.beta, fd07.ct ); fflush(stdout);
@@ -2196,7 +1795,7 @@ int main( int argc, char ** argv )
 	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr03.name, sr03.et, ( sr03.flops * 1e-9 ), sr03.ot, sr03.sErr.aErr, sr03.sErr.rErr, sr03.sErr.pos ); fflush(stdout);
 	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr04.name, sr04.et, ( sr04.flops * 1e-9 ), sr04.ot, sr04.sErr.aErr, sr04.sErr.rErr, sr04.sErr.pos ); fflush(stdout);
 	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr05.name, sr05.et, ( sr05.flops * 1e-9 ), sr05.ot, sr05.sErr.aErr, sr05.sErr.rErr, sr05.sErr.pos ); fflush(stdout);
-//	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr06.name, sr06.et, ( sr06.flops * 1e-9 ), sr06.ot, sr06.sErr.aErr, sr06.sErr.rErr, sr06.sErr.pos ); fflush(stdout);
+	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr06.name, sr06.et, ( sr06.flops * 1e-9 ), sr06.ot, sr06.sErr.aErr, sr06.sErr.rErr, sr06.sErr.pos ); fflush(stdout);
 //	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr07.name, sr07.et, ( sr07.flops * 1e-9 ), sr07.ot, sr07.sErr.aErr, sr07.sErr.rErr, sr07.sErr.pos ); fflush(stdout);
 //	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr08.name, sr08.et, ( sr08.flops * 1e-9 ), sr08.ot, sr08.sErr.aErr, sr08.sErr.rErr, sr08.sErr.pos ); fflush(stdout);
 //	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr09.name, sr09.et, ( sr09.flops * 1e-9 ), sr09.ot, sr09.sErr.aErr, sr09.sErr.rErr, sr09.sErr.pos ); fflush(stdout);
