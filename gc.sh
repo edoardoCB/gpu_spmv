@@ -16,12 +16,15 @@ fi
 
 HOST=$(hostname)
 CC=nvcc
-SRC=gpuSpmv_main.cu
-EXE=gpuSpmv
+SRC=cudaSpmv.cu
+EXE=cudaSpmv
 LOG=log.txt
 OPT=""
 INC=""
 LIB="-lcusparse"
+HASH_FILE="HASH.txt"
+HASH=$(git show-ref --hash)
+echo ${HASH} > ${HASH_FILE}
 
 
 
@@ -78,10 +81,12 @@ ${CC} ${INC} ${OPT} ${SRC} ${LIB} -o ${EXE} 1>${LOG} 2>&1
 
 
 
-if [ "$?" == "0" ]
-then
-echo "Compilation successfully ... :)"
+if [ "$?" == "0" ]; then
+	echo "Compilation successfully ... :)"
 	rm -f ${LOG}
+	echo "moving files to working directory... "
+	mv HASH.txt ./..
+	mv ${EXE} ./..
 else
 	echo "Compilation error ... :("
 	echo "Log file content:"
@@ -89,5 +94,6 @@ else
 	cat ${LOG}
 	echo
 fi
+
 
 
