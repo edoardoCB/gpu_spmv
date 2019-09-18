@@ -418,17 +418,6 @@ static void init_vec( const UIN ompNT, const UIN len, FPT * vec )
 
 
 
-static void fill_array( const UIN ompNT, const UIN len, FPT val, FPT * array )
-{
-	UIN i;
-	#pragma omp parallel for default(shared) private(i) num_threads(ompNT) schedule(OMP_SCH) if(_OPENMP)
-	for ( i = 0; i < len; i++ )
-		array[i] = val;
-	return;
-}
-
-
-
 static void ncsr( const UIN ompNT, const str_matCSR matCSR, const FPT * vec, FPT * res )
 {
 	UIN i, j;
@@ -1330,8 +1319,8 @@ static void getArraysAxSecAXT_COM_H1( const UIN bs, const UIN log, const UIN omp
 {
 	const UIN nrows = matAXT->nrows;
 	const UIN   thw = matAXT->tileHW;
-	      UIN rowID, rowLen, eleCtr, posCSR, bid, bco, tid, tco, posAX, posSEC, posBLK, q1, q2, offset, blk;
-	#pragma omp parallel for default(shared) private(rowID,rowLen,eleCtr,posCSR,bid,bco,tid,tco,posAX,posSEC,posBLK,q1,q2,offset) num_threads(ompNT) schedule(OMP_SCH) if(_OPENMP)
+	      UIN rowID, rowLen, eleCtr, posCSR, bco, tid, tco, posAX, posSEC, q1, q2, offset;
+	#pragma omp parallel for default(shared) private(rowID,rowLen,eleCtr,posCSR,bco,tid,tco,posAX,posSEC,q1,q2,offset) num_threads(ompNT) schedule(OMP_SCH) if(_OPENMP)
 	for ( rowID = 0; rowID < nrows; rowID++ )
 	{
 		rowLen = matCSR.rl[rowID];
@@ -1340,13 +1329,11 @@ static void getArraysAxSecAXT_COM_H1( const UIN bs, const UIN log, const UIN omp
 			eleCtr = 0;
 			for ( posCSR = matCSR.row[rowID]; posCSR < matCSR.row[rowID+1]; posCSR++ )
 			{
-				bid                   = ((posCSR+bs)/bs)-1;
 				bco                   =   posCSR%bs;
 				tid                   = ((posCSR+thw)/thw)-1;
 				tco                   =  posCSR%thw;
 				posAX                 = tid * 2 * thw + tco;
 				posSEC                = tid     * thw + tco;
-				posBLK                = bid     * bs  + bco;
 				matAXT->ax[posAX]     = matCSR.val[posCSR];
 				matAXT->ax[posAX+thw] = vec[matCSR.col[posCSR]];
 				if ( (eleCtr==0) || (bco==0))
@@ -1720,8 +1707,136 @@ static __host__ str_res test_gaxtuh( const UIN cudaBlockSize, const str_matAXT m
 	HANDLE_CUDA_ERROR( cudaFree( d_rwp   ) );
 	HANDLE_CUDA_ERROR( cudaFree( d_res   ) );
 	// store results
+	char TH[5]; sprintf( TH, "%d", th );
+	char buffer[48];
+	strcpy( buffer, "gaxtuh" );
+	strcat( buffer, TH );
 	str_res sr;
-	strcpy( sr.name, "gaxtuh" );
+	strcpy( sr.name, buffer );
+	sr.et    = ( (double) tt / (double) NUM_ITE ) * 1e-3;
+	sr.ot    = 0.0;
+	sr.flops = ( 2.0 * ( (double) matAXT.nnz ) ) / sr.et;
+	get_errors( matAXT.nrows, ref, res, &(sr.sErr) );
+	// free cpu memory
+	free( res );
+	return( sr );
+}
+
+
+
+static __global__ void gaxtch1( const UIN log, const UIN lenAX, const FPT * ax, const UIN * hdr, FPT * y )
+{
+	const UIN tidBLCK = threadIdx.x;
+	const UIN widBLCK = tidBLCK >> 5;
+	const UIN tidWARP = tidBLCK & 31;
+	const UIN pAX     = blockIdx.x * 2 * blockDim.x + widBLCK * 64 + tidWARP;
+	const UIN ro      = hdr[blockIdx.x * blockDim.x + tidBLCK];
+	      UIN r, o;
+	       __shared__ FPT blk1[32];
+	extern __shared__ FPT blk2[];
+	      FPT vo = 0.0, v1 = 0.0, v2 = 0.0, v3 = 0.0;
+	//if (tidBLCK == 0) printf( "bidGRID:%7d, pAX:%7d, lenAX:%7d\n", blockIdx.x, pAX, lenAX );
+	// initialize auxiliary arrays
+	blk1[tidWARP] = 0.0;
+	blk2[tidBLCK] = 0.0;
+	__syncthreads();
+	// read values from global memory array ax[] and perform multiplication on registers
+	vo = ax[pAX] * ax[pAX+32];
+	v1 = vo;
+	__syncthreads();
+	// perform warp-level reduction in v1
+	v2 = __shfl_up_sync( FULL_MASK, v1,  1 ); if (tidWARP >=  1) v1 = v1 + v2;
+	v2 = __shfl_up_sync( FULL_MASK, v1,  2 ); if (tidWARP >=  2) v1 = v1 + v2;
+	v2 = __shfl_up_sync( FULL_MASK, v1,  4 ); if (tidWARP >=  4) v1 = v1 + v2;
+	v2 = __shfl_up_sync( FULL_MASK, v1,  8 ); if (tidWARP >=  8) v1 = v1 + v2;
+	v2 = __shfl_up_sync( FULL_MASK, v1, 16 ); if (tidWARP >= 16) v1 = v1 + v2;
+	__syncthreads();
+	// store warp-level results on shared memory block blk1[]
+	if (tidWARP == 31) blk1[widBLCK] = v1;
+	__syncthreads();
+	// use block's warp 0 to perform the reduction of the partial results stored on sb[]
+	if (widBLCK == 0)
+	{
+		v2 = blk1[tidWARP];
+		v3 = __shfl_up_sync( FULL_MASK, v2,  1 ); if (tidWARP >=  1) v2 = v2 + v3;
+		v3 = __shfl_up_sync( FULL_MASK, v2,  2 ); if (tidWARP >=  2) v2 = v2 + v3;
+		v3 = __shfl_up_sync( FULL_MASK, v2,  4 ); if (tidWARP >=  4) v2 = v2 + v3;
+		v3 = __shfl_up_sync( FULL_MASK, v2,  8 ); if (tidWARP >=  8) v2 = v2 + v3;
+		v3 = __shfl_up_sync( FULL_MASK, v2, 16 ); if (tidWARP >= 16) v2 = v2 + v3;
+		blk1[tidWARP] = v3;
+	}
+	__syncthreads();
+	// update v1 with partial reductions from block's warp 0
+	if (widBLCK > 0) v1 = v1 + blk1[widBLCK-1];
+	__syncthreads();
+	// write in blk2[] complete reduction values in v1
+	blk2[tidBLCK] = v1;
+	__syncthreads();
+	// perform atomic addition to acumulate value in y[]
+	if (ro)
+	{
+		r  = ro >> log;
+		o  = ro & (blockDim.x - 1);
+		v1 = blk2[tidBLCK + o] - v1 + vo;
+		atomicAdd( &y[r], v1 );
+	}
+	return;
+}
+
+
+
+static __host__ str_res test_gaxtch1( const UIN cudaBlockSize, const str_matAXT matAXT, const FPT * ref )
+{
+	// 
+	const UIN tn           = matAXT.tileN;
+	const UIN log          = matAXT.log;
+	const UIN cudaBlockNum = ( (tn*32) + cudaBlockSize - 1 ) / cudaBlockSize;
+
+	printf( "tn:    %7d\n", tn           );
+	printf( "cbn:   %7d\n", cudaBlockNum );
+	printf( "lenAX: %7d\n", matAXT.lenAX ); fflush(stdout);
+
+
+	// allocate memory on GPU
+	FPT * d_ax;  HANDLE_CUDA_ERROR( cudaMalloc( &d_ax,  matAXT.lenAX  * sizeof(FPT) ) ); TEST_POINTER( d_ax  );
+	UIN * d_hdr; HANDLE_CUDA_ERROR( cudaMalloc( &d_hdr, matAXT.lenSEC * sizeof(UIN) ) ); TEST_POINTER( d_hdr );
+	FPT * d_res; HANDLE_CUDA_ERROR( cudaMalloc( &d_res, matAXT.nrows  * sizeof(FPT) ) ); TEST_POINTER( d_res );
+	// copy necessary arrays to device
+	HANDLE_CUDA_ERROR( cudaMemcpy( d_ax,  matAXT.ax,  matAXT.lenAX  * sizeof(FPT), cudaMemcpyHostToDevice ) );
+	HANDLE_CUDA_ERROR( cudaMemcpy( d_hdr, matAXT.sec, matAXT.lenSEC * sizeof(UIN), cudaMemcpyHostToDevice ) );
+	// create events for time measuring
+	cudaEvent_t cet1; HANDLE_CUDA_ERROR( cudaEventCreate( &cet1 ) );
+	cudaEvent_t cet2; HANDLE_CUDA_ERROR( cudaEventCreate( &cet2 ) );
+	// timed iterations
+	float ti = 0.0f, tt = 0.0f;
+	UIN i;
+	for ( i = 0; i < NUM_ITE; i++ )
+	{
+		HANDLE_CUDA_ERROR( cudaMemset( d_res, 0, matAXT.nrows  * sizeof(FPT) ) );
+		HANDLE_CUDA_ERROR( cudaEventRecord( cet1 ) );
+		gaxtch1 <<<cudaBlockNum, cudaBlockSize, (cudaBlockSize * sizeof(FPT))>>> ( log, matAXT.lenAX, d_ax, d_hdr, d_res );
+		HANDLE_CUDA_ERROR( cudaEventRecord( cet2 ) );
+		HANDLE_CUDA_ERROR( cudaEventSynchronize( cet2 ) );
+		HANDLE_CUDA_ERROR( cudaEventElapsedTime( &ti, cet1, cet2 ) );
+		tt = tt + ti;
+	}
+	// destroy events for time measuring
+	HANDLE_CUDA_ERROR( cudaEventDestroy( cet1 ) );
+	HANDLE_CUDA_ERROR( cudaEventDestroy( cet2 ) );
+	// copy result from device
+	FPT * res = (FPT *) malloc( matAXT.nrows * sizeof(FPT) ); TEST_POINTER( res );
+	HANDLE_CUDA_ERROR( cudaMemcpy( res, d_res, matAXT.nrows * sizeof(FPT), cudaMemcpyDeviceToHost ) );
+	// free device memory
+	HANDLE_CUDA_ERROR( cudaFree( d_ax  ) );
+	HANDLE_CUDA_ERROR( cudaFree( d_hdr ) );
+	HANDLE_CUDA_ERROR( cudaFree( d_res ) );
+	// store results
+	char BS[5]; sprintf( BS, "%d", matAXT.bs );
+	char buffer[48];
+	strcpy( buffer, "gaxtch1bs" );
+	strcat( buffer, BS );
+	str_res sr;
+	strcpy( sr.name, buffer );
 	sr.et    = ( (double) tt / (double) NUM_ITE ) * 1e-3;
 	sr.ot    = 0.0;
 	sr.flops = ( 2.0 * ( (double) matAXT.nnz ) ) / sr.et;
@@ -1793,22 +1908,28 @@ int main( int argc, char ** argv )
 	// AXC format  ------------------------------------------------------------------------------------------------------------------
 
 	// AXT format  ------------------------------------------------------------------------------------------------------------------
-	str_matAXT matAXT1;  str_formatData fd04 = getFormatDataAXT( sia.ompMT, 512, 32,  1, "UNC", matCSR, vr, &matAXT1 );
-	str_matAXT matAXT2;  str_formatData fd05 = getFormatDataAXT( sia.ompMT, 512, 32,  4, "UNC", matCSR, vr, &matAXT2 );
-	str_res sr06 = test_gaxtuh1( sia.cbs, matAXT1, yr );
-	str_res sr07 = test_gaxtuh ( sia.cbs, matAXT2, yr );
+	str_matAXT matAXT01;  str_formatData fd04 = getFormatDataAXT( sia.ompMT, sia.cbs, 32,  1, "UNC", matCSR, vr, &matAXT01 );
+	str_matAXT matAXT02;  str_formatData fd05 = getFormatDataAXT( sia.ompMT, sia.cbs, 32,  4, "UNC", matCSR, vr, &matAXT02 );
+	str_matAXT matAXT03;  str_formatData fd06 = getFormatDataAXT( sia.ompMT, sia.cbs, 32,  8, "UNC", matCSR, vr, &matAXT03 );
+	str_matAXT matAXT04;  str_formatData fd07 = getFormatDataAXT( sia.ompMT, sia.cbs, 32, 12, "UNC", matCSR, vr, &matAXT04 );
+	str_matAXT matAXT05;  str_formatData fd08 = getFormatDataAXT( sia.ompMT, sia.cbs, 32, 16, "UNC", matCSR, vr, &matAXT05 );
+	str_matAXT matAXT06;  str_formatData fd09 = getFormatDataAXT( sia.ompMT, sia.cbs, 32, 20, "UNC", matCSR, vr, &matAXT06 );
+	str_matAXT matAXT07;  str_formatData fd10 = getFormatDataAXT( sia.ompMT, sia.cbs, 32, 24, "UNC", matCSR, vr, &matAXT07 );
+	str_matAXT matAXT08;  str_formatData fd11 = getFormatDataAXT( sia.ompMT, sia.cbs, 32, 28, "UNC", matCSR, vr, &matAXT08 );
+	str_matAXT matAXT09;  str_formatData fd12 = getFormatDataAXT( sia.ompMT, sia.cbs, 32, 32, "UNC", matCSR, vr, &matAXT09 );
+	str_matAXT matAXT10;  str_formatData fd13 = getFormatDataAXT( sia.ompMT, sia.cbs, 32,  1, "COM", matCSR, vr, &matAXT10 );
+	str_res sr06 = test_gaxtuh1( sia.cbs, matAXT01, yr );
+	str_res sr07 = test_gaxtuh ( sia.cbs, matAXT02, yr );
+	str_res sr08 = test_gaxtuh ( sia.cbs, matAXT03, yr );
+	str_res sr09 = test_gaxtuh ( sia.cbs, matAXT04, yr );
+	str_res sr10 = test_gaxtuh ( sia.cbs, matAXT05, yr );
+	str_res sr11 = test_gaxtuh ( sia.cbs, matAXT06, yr );
+	str_res sr12 = test_gaxtuh ( sia.cbs, matAXT07, yr );
+	str_res sr13 = test_gaxtuh ( sia.cbs, matAXT08, yr );
+	str_res sr14 = test_gaxtuh ( sia.cbs, matAXT09, yr );
+	str_res sr15 = test_gaxtch1( sia.cbs, matAXT10, yr );
 	// AXT format  ------------------------------------------------------------------------------------------------------------------
 /*
-	str_matAXT matAXT2;  str_formatData fd05 = getFormatDataAXT( sia.ompMT,   64, 8,   4, "UNC", matCSR, vr, &matAXT2 );
-	str_matAXT matAXT3;  str_formatData fd06 = getFormatDataAXT( sia.ompMT,   64, 8,   8, "UNC", matCSR, vr, &matAXT3 );
-	str_matAXT matAXT4;  str_formatData fd07 = getFormatDataAXT( sia.ompMT,   64, 8,  12, "UNC", matCSR, vr, &matAXT4 );
-	str_matAXT matAXT5;  str_formatData fd08 = getFormatDataAXT( sia.ompMT,   64, 8,  16, "UNC", matCSR, vr, &matAXT5 );
-	str_matAXT matAXT6;  str_formatData fd09 = getFormatDataAXT( sia.ompMT,   64, 8,  20, "UNC", matCSR, vr, &matAXT6 );
-	str_matAXT matAXT7;  str_formatData fd10 = getFormatDataAXT( sia.ompMT,   64, 8,  24, "UNC", matCSR, vr, &matAXT7 );
-	str_matAXT matAXT8;  str_formatData fd11 = getFormatDataAXT( sia.ompMT,   64, 8,  28, "UNC", matCSR, vr, &matAXT8 );
-	str_matAXT matAXT9;  str_formatData fd12 = getFormatDataAXT( sia.ompMT,   64, 8,  32, "UNC", matCSR, vr, &matAXT9 );
-	str_matAXT matAXT10; str_formatData fd13 = getFormatDataAXT( sia.ompMT,   64, 8,  36, "UNC", matCSR, vr, &matAXT10 );
-	str_matAXT matAXT11; str_formatData fd14 = getFormatDataAXT( sia.ompMT,   64, 8,  40, "UNC", matCSR, vr, &matAXT11 );
 	str_matAXT matAXT12; str_formatData fd15 = getFormatDataAXT( sia.ompMT,   64, 8,   1, "COM", matCSR, vr, &matAXT12 );
 	str_matAXT matAXT13; str_formatData fd16 = getFormatDataAXT( sia.ompMT,  512, 8,   1, "COM", matCSR, vr, &matAXT13 );
 	str_matAXT matAXT14; str_formatData fd17 = getFormatDataAXT( sia.ompMT,   64, 8,   8, "COM", matCSR, vr, &matAXT14 );
@@ -1845,14 +1966,14 @@ int main( int argc, char ** argv )
 	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd03.name, ( fd03.mfp * 1e-6 ), fd03.beta, fd03.ct ); fflush(stdout);
 	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd04.name, ( fd04.mfp * 1e-6 ), fd04.beta, fd04.ct ); fflush(stdout);
 	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd05.name, ( fd05.mfp * 1e-6 ), fd05.beta, fd05.ct ); fflush(stdout);
-//	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd06.name, ( fd06.mfp * 1e-6 ), fd06.beta, fd06.ct ); fflush(stdout);
-//	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd07.name, ( fd07.mfp * 1e-6 ), fd07.beta, fd07.ct ); fflush(stdout);
-//	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd08.name, ( fd08.mfp * 1e-6 ), fd08.beta, fd08.ct ); fflush(stdout);
-//	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd09.name, ( fd09.mfp * 1e-6 ), fd09.beta, fd09.ct ); fflush(stdout);
-//	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd10.name, ( fd10.mfp * 1e-6 ), fd10.beta, fd10.ct ); fflush(stdout);
-//	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd11.name, ( fd11.mfp * 1e-6 ), fd11.beta, fd11.ct ); fflush(stdout);
-//	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd12.name, ( fd12.mfp * 1e-6 ), fd12.beta, fd12.ct ); fflush(stdout);
-//	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd13.name, ( fd13.mfp * 1e-6 ), fd13.beta, fd13.ct ); fflush(stdout);
+	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd06.name, ( fd06.mfp * 1e-6 ), fd06.beta, fd06.ct ); fflush(stdout);
+	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd07.name, ( fd07.mfp * 1e-6 ), fd07.beta, fd07.ct ); fflush(stdout);
+	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd08.name, ( fd08.mfp * 1e-6 ), fd08.beta, fd08.ct ); fflush(stdout);
+	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd09.name, ( fd09.mfp * 1e-6 ), fd09.beta, fd09.ct ); fflush(stdout);
+	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd10.name, ( fd10.mfp * 1e-6 ), fd10.beta, fd10.ct ); fflush(stdout);
+	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd11.name, ( fd11.mfp * 1e-6 ), fd11.beta, fd11.ct ); fflush(stdout);
+	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd12.name, ( fd12.mfp * 1e-6 ), fd12.beta, fd12.ct ); fflush(stdout);
+	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd13.name, ( fd13.mfp * 1e-6 ), fd13.beta, fd13.ct ); fflush(stdout);
 //	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd14.name, ( fd14.mfp * 1e-6 ), fd14.beta, fd14.ct ); fflush(stdout);
 //	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd15.name, ( fd15.mfp * 1e-6 ), fd15.beta, fd15.ct ); fflush(stdout);
 //	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd16.name, ( fd16.mfp * 1e-6 ), fd16.beta, fd16.ct ); fflush(stdout);
@@ -1873,14 +1994,14 @@ int main( int argc, char ** argv )
 	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr05.name, sr05.et, ( sr05.flops * 1e-9 ), sr05.ot, sr05.sErr.aErr, sr05.sErr.rErr, sr05.sErr.pos ); fflush(stdout);
 	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr06.name, sr06.et, ( sr06.flops * 1e-9 ), sr06.ot, sr06.sErr.aErr, sr06.sErr.rErr, sr06.sErr.pos ); fflush(stdout);
 	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr07.name, sr07.et, ( sr07.flops * 1e-9 ), sr07.ot, sr07.sErr.aErr, sr07.sErr.rErr, sr07.sErr.pos ); fflush(stdout);
-//	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr08.name, sr08.et, ( sr08.flops * 1e-9 ), sr08.ot, sr08.sErr.aErr, sr08.sErr.rErr, sr08.sErr.pos ); fflush(stdout);
-//	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr09.name, sr09.et, ( sr09.flops * 1e-9 ), sr09.ot, sr09.sErr.aErr, sr09.sErr.rErr, sr09.sErr.pos ); fflush(stdout);
-//	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr10.name, sr10.et, ( sr10.flops * 1e-9 ), sr10.ot, sr10.sErr.aErr, sr10.sErr.rErr, sr10.sErr.pos ); fflush(stdout);
-//	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr11.name, sr11.et, ( sr11.flops * 1e-9 ), sr11.ot, sr11.sErr.aErr, sr11.sErr.rErr, sr11.sErr.pos ); fflush(stdout);
-//	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr12.name, sr12.et, ( sr12.flops * 1e-9 ), sr12.ot, sr12.sErr.aErr, sr12.sErr.rErr, sr12.sErr.pos ); fflush(stdout);
-//	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr13.name, sr13.et, ( sr13.flops * 1e-9 ), sr13.ot, sr13.sErr.aErr, sr13.sErr.rErr, sr13.sErr.pos ); fflush(stdout);
-//	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr14.name, sr14.et, ( sr14.flops * 1e-9 ), sr14.ot, sr14.sErr.aErr, sr14.sErr.rErr, sr14.sErr.pos ); fflush(stdout);
-//	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr15.name, sr15.et, ( sr15.flops * 1e-9 ), sr15.ot, sr15.sErr.aErr, sr15.sErr.rErr, sr15.sErr.pos ); fflush(stdout);
+	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr08.name, sr08.et, ( sr08.flops * 1e-9 ), sr08.ot, sr08.sErr.aErr, sr08.sErr.rErr, sr08.sErr.pos ); fflush(stdout);
+	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr09.name, sr09.et, ( sr09.flops * 1e-9 ), sr09.ot, sr09.sErr.aErr, sr09.sErr.rErr, sr09.sErr.pos ); fflush(stdout);
+	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr10.name, sr10.et, ( sr10.flops * 1e-9 ), sr10.ot, sr10.sErr.aErr, sr10.sErr.rErr, sr10.sErr.pos ); fflush(stdout);
+	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr11.name, sr11.et, ( sr11.flops * 1e-9 ), sr11.ot, sr11.sErr.aErr, sr11.sErr.rErr, sr11.sErr.pos ); fflush(stdout);
+	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr12.name, sr12.et, ( sr12.flops * 1e-9 ), sr12.ot, sr12.sErr.aErr, sr12.sErr.rErr, sr12.sErr.pos ); fflush(stdout);
+	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr13.name, sr13.et, ( sr13.flops * 1e-9 ), sr13.ot, sr13.sErr.aErr, sr13.sErr.rErr, sr13.sErr.pos ); fflush(stdout);
+	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr14.name, sr14.et, ( sr14.flops * 1e-9 ), sr14.ot, sr14.sErr.aErr, sr14.sErr.rErr, sr14.sErr.pos ); fflush(stdout);
+	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr15.name, sr15.et, ( sr15.flops * 1e-9 ), sr15.ot, sr15.sErr.aErr, sr15.sErr.rErr, sr15.sErr.pos ); fflush(stdout);
 //	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr16.name, sr16.et, ( sr16.flops * 1e-9 ), sr16.ot, sr16.sErr.aErr, sr16.sErr.rErr, sr16.sErr.pos ); fflush(stdout);
 //	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr17.name, sr17.et, ( sr17.flops * 1e-9 ), sr17.ot, sr17.sErr.aErr, sr17.sErr.rErr, sr17.sErr.pos ); fflush(stdout);
 //	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr18.name, sr18.et, ( sr18.flops * 1e-9 ), sr18.ot, sr18.sErr.aErr, sr18.sErr.rErr, sr18.sErr.pos ); fflush(stdout);

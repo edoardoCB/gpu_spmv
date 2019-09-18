@@ -29,8 +29,8 @@ MAT_LST07="M00_e001.csr M01_scircuit.bin M02_mac_econ_fwd500.bin M03_e002.csr M0
 MAT_LST08="M06_cop20k_A.bin"
 MAT_LST=${MAT_LST00}
 SLEEP_TIME=30
-KFSL=4800
-KFSU=4900
+KFSL=6300
+KFSU=6400
 CFSL=6600
 CFSU=6700
 
@@ -59,7 +59,7 @@ if grep -q "kay" <<< "${HOST}"; then
 			rm -f ${STA_DIR}/${M}*
 		done
 	fi
-	JOB_TIME="0:05:00"
+	JOB_TIME="0:20:00"
 	JOB_ACCOUNT="hpce3ic5"
 fi
 
@@ -91,7 +91,7 @@ if grep -q "indy2" <<< "${HOST}"; then
 			rm -f ${STA_DIR}/${M}*
 		done
 	fi
-	JOB_TIME="0:15:00"
+	JOB_TIME="0:20:00"
 	JOB_ACCOUNT="dc010-edoardo"
 fi
 
