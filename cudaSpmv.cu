@@ -1842,6 +1842,111 @@ static __host__ str_res test_gaxtch1( const UIN cudaBlockSize, const str_matAXT 
 
 
 
+static __global__ void gaxtch( const UIN LOG, const UIN TH, const FPT * ax, const UIN * hdr, FPT * y )
+{
+	extern __shared__ FPT blk[];
+	      FPT * blk1  = (FPT*) blk;
+	      FPT * blk2  = (FPT*) &blk1[TH*32];
+	const UIN tidGRID = blockIdx.x * blockDim.x + threadIdx.x;
+	const UIN widGRID = tidGRID >> 5;
+	const UIN tidWARP = tidGRID & 31;
+	const UIN a1      = widGRID * TH * 64 + tidWARP;
+	const UIN a2      = a1 + TH * 64;
+	      UIN pAX     = a1;
+	      UIN i       = tidWARP;
+	      FPT v1      = ax[pAX] * ax[pAX+32];
+	      FPT v2      = v1;
+	      UIN ro, r, o;
+	blk1[i] = v1;
+	blk2[i] = v2;
+	__syncthreads();
+	for ( pAX = pAX + 64, i = i + 32; pAX < a2; pAX = pAX + 64, i = i + 32 )
+	{
+		v1      = ax[pAX] * ax[pAX+32];
+		blk1[i] = v1;
+		v2      = v2 + v1;
+		blk2[i] = v2;
+	}
+	__syncthreads();
+	for ( i = tidWARP; i < (tidWARP + TH*32); i = i + 32 )
+	{
+		ro = hdr[i];
+		if (ro)
+		{
+			r = ro >> LOG;
+			o = ro & (TH-1);
+			v1 = blk2[i+o] - blk2[i] + blk1[i];
+			atomicAdd( &y[r], v1 );
+		}
+	}
+	return;
+}
+
+
+
+static __host__ str_res test_gaxtch( const UIN cudaBlockSize, const str_matAXT matAXT, const FPT * ref )
+{
+	// 
+	const UIN tn           = matAXT.tileN;
+	const UIN th           = matAXT.tileH;
+	const UIN thw          = matAXT.tileHW;
+	const UIN log          = matAXT.log;
+	const UIN cudaBlockNum = ( (tn*32) + cudaBlockSize - 1 ) / cudaBlockSize;
+	const UIN devLenAX     = cudaBlockNum * 2 * th * thw;
+	const UIN devLenSEC    = cudaBlockNum     * th * thw;
+	// allocate memory on GPU
+	FPT * d_ax;  HANDLE_CUDA_ERROR( cudaMalloc( &d_ax,  devLenAX      * sizeof(FPT) ) ); TEST_POINTER( d_ax  );
+	UIN * d_hdr; HANDLE_CUDA_ERROR( cudaMalloc( &d_hdr, devLenSEC     * sizeof(UIN) ) ); TEST_POINTER( d_hdr );
+	FPT * d_res; HANDLE_CUDA_ERROR( cudaMalloc( &d_res, matAXT.nrows  * sizeof(FPT) ) ); TEST_POINTER( d_res );
+	// copy necessary arrays to device
+	HANDLE_CUDA_ERROR( cudaMemset( d_ax,  0, devLenAX  * sizeof(FPT) ) );
+	HANDLE_CUDA_ERROR( cudaMemset( d_hdr, 0, devLenSEC * sizeof(UIN) ) );
+	HANDLE_CUDA_ERROR( cudaMemcpy( d_ax,  matAXT.ax,  matAXT.lenAX  * sizeof(FPT), cudaMemcpyHostToDevice ) );
+	HANDLE_CUDA_ERROR( cudaMemcpy( d_hdr, matAXT.sec, matAXT.lenSEC * sizeof(UIN), cudaMemcpyHostToDevice ) );
+	// create events for time measuring
+	cudaEvent_t cet1; HANDLE_CUDA_ERROR( cudaEventCreate( &cet1 ) );
+	cudaEvent_t cet2; HANDLE_CUDA_ERROR( cudaEventCreate( &cet2 ) );
+	// timed iterations
+	float ti = 0.0f, tt = 0.0f;
+	UIN i;
+	for ( i = 0; i < NUM_ITE; i++ )
+	{
+		HANDLE_CUDA_ERROR( cudaMemset( d_res, 0, matAXT.nrows  * sizeof(FPT) ) );
+		HANDLE_CUDA_ERROR( cudaEventRecord( cet1 ) );
+		gaxtch <<<cudaBlockNum, cudaBlockSize, (2 * th * thw * sizeof(FPT))>>> ( log, th, d_ax, d_hdr, d_res );
+		HANDLE_CUDA_ERROR( cudaEventRecord( cet2 ) );
+		HANDLE_CUDA_ERROR( cudaEventSynchronize( cet2 ) );
+		HANDLE_CUDA_ERROR( cudaEventElapsedTime( &ti, cet1, cet2 ) );
+		tt = tt + ti;
+	}
+	// destroy events for time measuring
+	HANDLE_CUDA_ERROR( cudaEventDestroy( cet1 ) );
+	HANDLE_CUDA_ERROR( cudaEventDestroy( cet2 ) );
+	// copy result from device
+	FPT * res = (FPT *) malloc( matAXT.nrows * sizeof(FPT) ); TEST_POINTER( res );
+	HANDLE_CUDA_ERROR( cudaMemcpy( res, d_res, matAXT.nrows * sizeof(FPT), cudaMemcpyDeviceToHost ) );
+	// free device memory
+	HANDLE_CUDA_ERROR( cudaFree( d_ax  ) );
+	HANDLE_CUDA_ERROR( cudaFree( d_hdr ) );
+	HANDLE_CUDA_ERROR( cudaFree( d_res ) );
+	// store results
+	char TH[5]; sprintf( TH, "%d", th );
+	char buffer[48];
+	strcpy( buffer, "gaxtch" );
+	strcat( buffer, TH );
+	str_res sr;
+	strcpy( sr.name, buffer );
+	sr.et    = ( (double) tt / (double) NUM_ITE ) * 1e-3;
+	sr.ot    = 0.0;
+	sr.flops = ( 2.0 * ( (double) matAXT.nnz ) ) / sr.et;
+	get_errors( matAXT.nrows, ref, res, &(sr.sErr) );
+	// free cpu memory
+	free( res );
+	return( sr );
+}
+
+
+
 #endif
 
 
@@ -1912,6 +2017,14 @@ int main( int argc, char ** argv )
 	str_matAXT matAXT08;  str_formatData fd11 = getFormatDataAXT( sia.ompMT, sia.cbs, TILE_HW, 28, "UNC", matCSR, vr, &matAXT08 );
 	str_matAXT matAXT09;  str_formatData fd12 = getFormatDataAXT( sia.ompMT, sia.cbs, TILE_HW, 32, "UNC", matCSR, vr, &matAXT09 );
 	str_matAXT matAXT10;  str_formatData fd13 = getFormatDataAXT( sia.ompMT, sia.cbs, TILE_HW,  1, "COM", matCSR, vr, &matAXT10 );
+	str_matAXT matAXT11;  str_formatData fd14 = getFormatDataAXT( sia.ompMT, sia.cbs, TILE_HW,  4, "COM", matCSR, vr, &matAXT11 );
+//	str_matAXT matAXT12;  str_formatData fd15 = getFormatDataAXT( sia.ompMT, sia.cbs, TILE_HW,  8, "COM", matCSR, vr, &matAXT12 );
+//	str_matAXT matAXT13;  str_formatData fd16 = getFormatDataAXT( sia.ompMT, sia.cbs, TILE_HW, 12, "COM", matCSR, vr, &matAXT13 );
+//	str_matAXT matAXT14;  str_formatData fd17 = getFormatDataAXT( sia.ompMT, sia.cbs, TILE_HW, 16, "COM", matCSR, vr, &matAXT14 );
+//	str_matAXT matAXT15;  str_formatData fd18 = getFormatDataAXT( sia.ompMT, sia.cbs, TILE_HW, 20, "COM", matCSR, vr, &matAXT15 );
+//	str_matAXT matAXT16;  str_formatData fd19 = getFormatDataAXT( sia.ompMT, sia.cbs, TILE_HW, 24, "COM", matCSR, vr, &matAXT16 );
+//	str_matAXT matAXT17;  str_formatData fd20 = getFormatDataAXT( sia.ompMT, sia.cbs, TILE_HW, 28, "COM", matCSR, vr, &matAXT17 );
+//	str_matAXT matAXT18;  str_formatData fd21 = getFormatDataAXT( sia.ompMT, sia.cbs, TILE_HW, 32, "COM", matCSR, vr, &matAXT18 );
 	str_res sr06 = test_gaxtuh1( sia.cbs, matAXT01, yr );
 	str_res sr07 = test_gaxtuh ( sia.cbs, matAXT02, yr );
 	str_res sr08 = test_gaxtuh ( sia.cbs, matAXT03, yr );
@@ -1922,37 +2035,16 @@ int main( int argc, char ** argv )
 	str_res sr13 = test_gaxtuh ( sia.cbs, matAXT08, yr );
 	str_res sr14 = test_gaxtuh ( sia.cbs, matAXT09, yr );
 	str_res sr15 = test_gaxtch1( sia.cbs, matAXT10, yr );
+	str_res sr16 = test_gaxtch ( sia.cbs, matAXT11, yr );
+//	str_res sr17 = test_gaxtch ( sia.cbs, matAXT12, yr );
+//	str_res sr18 = test_gaxtch ( sia.cbs, matAXT13, yr );
+//	str_res sr19 = test_gaxtch ( sia.cbs, matAXT14, yr );
+//	str_res sr20 = test_gaxtch ( sia.cbs, matAXT15, yr );
+//	str_res sr21 = test_gaxtch ( sia.cbs, matAXT16, yr );
+//	str_res sr22 = test_gaxtch ( sia.cbs, matAXT17, yr );
+//	str_res sr23 = test_gaxtch ( sia.cbs, matAXT18, yr );
 	// AXT format  ------------------------------------------------------------------------------------------------------------------
-/*
-	str_matAXT matAXT12; str_formatData fd15 = getFormatDataAXT( sia.ompMT,   64, 8,   1, "COM", matCSR, vr, &matAXT12 );
-	str_matAXT matAXT13; str_formatData fd16 = getFormatDataAXT( sia.ompMT,  512, 8,   1, "COM", matCSR, vr, &matAXT13 );
-	str_matAXT matAXT14; str_formatData fd17 = getFormatDataAXT( sia.ompMT,   64, 8,   8, "COM", matCSR, vr, &matAXT14 );
-	str_matAXT matAXT15; str_formatData fd18 = getFormatDataAXT( sia.ompMT,   64, 8,  16, "COM", matCSR, vr, &matAXT15 );
-	str_matAXT matAXT16; str_formatData fd19 = getFormatDataAXT( sia.ompMT,   64, 8,  32, "COM", matCSR, vr, &matAXT16 );
-	str_matAXT matAXT17; str_formatData fd20 = getFormatDataAXT( sia.ompMT,   64, 8,  64, "COM", matCSR, vr, &matAXT17 );
-	str_matAXT matAXT18; str_formatData fd21 = getFormatDataAXT( sia.ompMT,   64, 8, 128, "COM", matCSR, vr, &matAXT18 );
-	str_matAXT matAXT19; str_formatData fd22 = getFormatDataAXT( sia.ompMT,   64, 8, 256, "COM", matCSR, vr, &matAXT19 );
-	str_matAXT matAXT20; str_formatData fd23 = getFormatDataAXT( sia.ompMT,   64, 8, 512, "COM", matCSR, vr, &matAXT20 );
-	str_res sr07 = test_int_axt_unc( sia.ompMT, matAXT2, yr );
-	str_res sr08 = test_int_axt_unc( sia.ompMT, matAXT3, yr );
-	str_res sr09 = test_int_axt_unc( sia.ompMT, matAXT4, yr );
-	str_res sr10 = test_int_axt_unc( sia.ompMT, matAXT5, yr );
-	str_res sr11 = test_int_axt_unc( sia.ompMT, matAXT6, yr );
-	str_res sr12 = test_int_axt_unc( sia.ompMT, matAXT7, yr );
-	str_res sr13 = test_int_axt_unc( sia.ompMT, matAXT8, yr );
-	str_res sr14 = test_int_axt_unc( sia.ompMT, matAXT9, yr );
-	str_res sr15 = test_int_axt_unc( sia.ompMT, matAXT10, yr );
-	str_res sr16 = test_int_axt_unc( sia.ompMT, matAXT11, yr );
-	str_res sr17 = test_int_axt_com_h1_bs64( sia.ompMT, matAXT12, yr );
-	str_res sr18 = test_int_axt_com_h1_bs512( sia.ompMT, matAXT13, yr );
-	str_res sr19 = test_int_axt_com( sia.ompMT, matAXT14, yr );
-	str_res sr20 = test_int_axt_com( sia.ompMT, matAXT15, yr );
-	str_res sr21 = test_int_axt_com( sia.ompMT, matAXT16, yr );
-	str_res sr22 = test_int_axt_com( sia.ompMT, matAXT17, yr );
-	str_res sr23 = test_int_axt_com( sia.ompMT, matAXT18, yr );
-	str_res sr24 = test_int_axt_com( sia.ompMT, matAXT19, yr );
-	str_res sr25 = test_int_axt_com( sia.ompMT, matAXT20, yr );
-*/
+
 	HDL; printf( "formats' data\n" ); HDL;
 	printf( "%25s %20s %10s %20s\n", "format", "memory [Mbytes]", "occupancy", "convTime [s]" );
 	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd01.name, ( fd01.mfp * 1e-6 ), fd01.beta, fd01.ct ); fflush(stdout);
@@ -1968,7 +2060,7 @@ int main( int argc, char ** argv )
 	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd11.name, ( fd11.mfp * 1e-6 ), fd11.beta, fd11.ct ); fflush(stdout);
 	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd12.name, ( fd12.mfp * 1e-6 ), fd12.beta, fd12.ct ); fflush(stdout);
 	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd13.name, ( fd13.mfp * 1e-6 ), fd13.beta, fd13.ct ); fflush(stdout);
-//	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd14.name, ( fd14.mfp * 1e-6 ), fd14.beta, fd14.ct ); fflush(stdout);
+	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd14.name, ( fd14.mfp * 1e-6 ), fd14.beta, fd14.ct ); fflush(stdout);
 //	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd15.name, ( fd15.mfp * 1e-6 ), fd15.beta, fd15.ct ); fflush(stdout);
 //	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd16.name, ( fd16.mfp * 1e-6 ), fd16.beta, fd16.ct ); fflush(stdout);
 //	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd17.name, ( fd17.mfp * 1e-6 ), fd17.beta, fd17.ct ); fflush(stdout);
@@ -1976,8 +2068,6 @@ int main( int argc, char ** argv )
 //	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd19.name, ( fd19.mfp * 1e-6 ), fd19.beta, fd19.ct ); fflush(stdout);
 //	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd20.name, ( fd20.mfp * 1e-6 ), fd20.beta, fd20.ct ); fflush(stdout);
 //	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd21.name, ( fd21.mfp * 1e-6 ), fd21.beta, fd21.ct ); fflush(stdout);
-//	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd22.name, ( fd22.mfp * 1e-6 ), fd22.beta, fd22.ct ); fflush(stdout);
-//	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd23.name, ( fd23.mfp * 1e-6 ), fd23.beta, fd23.ct ); fflush(stdout);
 
 	HDL; printf( "SpMV kernels' results\n" ); HDL;
 	printf( "%25s %15s %8s %15s %13s %13s %10s\n", "kernel", "exeTime [s]", "Gflops", "ordTime [s]", "errAbs", "errRel", "rowInd" );
@@ -1996,7 +2086,7 @@ int main( int argc, char ** argv )
 	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr13.name, sr13.et, ( sr13.flops * 1e-9 ), sr13.ot, sr13.sErr.aErr, sr13.sErr.rErr, sr13.sErr.pos ); fflush(stdout);
 	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr14.name, sr14.et, ( sr14.flops * 1e-9 ), sr14.ot, sr14.sErr.aErr, sr14.sErr.rErr, sr14.sErr.pos ); fflush(stdout);
 	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr15.name, sr15.et, ( sr15.flops * 1e-9 ), sr15.ot, sr15.sErr.aErr, sr15.sErr.rErr, sr15.sErr.pos ); fflush(stdout);
-//	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr16.name, sr16.et, ( sr16.flops * 1e-9 ), sr16.ot, sr16.sErr.aErr, sr16.sErr.rErr, sr16.sErr.pos ); fflush(stdout);
+	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr16.name, sr16.et, ( sr16.flops * 1e-9 ), sr16.ot, sr16.sErr.aErr, sr16.sErr.rErr, sr16.sErr.pos ); fflush(stdout);
 //	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr17.name, sr17.et, ( sr17.flops * 1e-9 ), sr17.ot, sr17.sErr.aErr, sr17.sErr.rErr, sr17.sErr.pos ); fflush(stdout);
 //	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr18.name, sr18.et, ( sr18.flops * 1e-9 ), sr18.ot, sr18.sErr.aErr, sr18.sErr.rErr, sr18.sErr.pos ); fflush(stdout);
 //	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr19.name, sr19.et, ( sr19.flops * 1e-9 ), sr19.ot, sr19.sErr.aErr, sr19.sErr.rErr, sr19.sErr.pos ); fflush(stdout);
@@ -2004,8 +2094,6 @@ int main( int argc, char ** argv )
 //	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr21.name, sr21.et, ( sr21.flops * 1e-9 ), sr21.ot, sr21.sErr.aErr, sr21.sErr.rErr, sr21.sErr.pos ); fflush(stdout);
 //	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr22.name, sr22.et, ( sr22.flops * 1e-9 ), sr22.ot, sr22.sErr.aErr, sr22.sErr.rErr, sr22.sErr.pos ); fflush(stdout);
 //	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr23.name, sr23.et, ( sr23.flops * 1e-9 ), sr23.ot, sr23.sErr.aErr, sr23.sErr.rErr, sr23.sErr.pos ); fflush(stdout);
-//	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr24.name, sr24.et, ( sr24.flops * 1e-9 ), sr24.ot, sr24.sErr.aErr, sr24.sErr.rErr, sr24.sErr.pos ); fflush(stdout);
-//	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr25.name, sr25.et, ( sr25.flops * 1e-9 ), sr25.ot, sr25.sErr.aErr, sr25.sErr.rErr, sr25.sErr.pos ); fflush(stdout);
 
 	return( EXIT_SUCCESS );
 }
