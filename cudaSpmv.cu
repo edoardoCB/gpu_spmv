@@ -77,6 +77,12 @@
 
 
 
+#ifndef TILE_HW
+	#define TILE_HW 32
+#endif
+
+
+
 #ifndef CHUNK_SIZE
 	#define CHUNK_SIZE 32
 #endif
@@ -152,7 +158,8 @@ static void printRunSettings( const str_inputArgs sia )
 	printf( "sizeof(FPT):        %zu bytes\n", sizeof(FPT) );
 	printf( "cudaBlockSize:      %d\n",  sia.cbs  );
 	printf( "NUM_ITE:            %d\n", (UIN) NUM_ITE );
-	printf( "CHUNK_SIZE:         %d\n", (UIN) CHUNK_SIZE ); fflush(stdout);
+	printf( "CHUNK_SIZE:         %d\n", (UIN) CHUNK_SIZE );
+	printf( "TILE_HW:            %d\n", (UIN) TILE_HW ); fflush(stdout);
 	return;
 }
 
@@ -1479,9 +1486,7 @@ static str_formatData getFormatDataAXT( const UIN ompNT, const UIN bs, const UIN
 				ti = measure_time( t2, t1 );
 				tt = tt + ti;
 			}
-			char THW[5]; sprintf( THW, "%d", thw );
-			strcpy( buffer, "faxtuh1hw" );
-			strcat( buffer, THW );
+			strcpy( buffer, "faxtuh1" );
 		}
 		else
 		{
@@ -1494,18 +1499,15 @@ static str_formatData getFormatDataAXT( const UIN ompNT, const UIN bs, const UIN
 				tt = tt + ti;
 			}
 			char TH[5];  sprintf( TH,  "%d", th  );
-			char THW[5]; sprintf( THW, "%d", thw );
 			strcpy( buffer, "faxtuh" );
 			strcat( buffer, TH );
-			strcat( buffer, "hw" );
-			strcat( buffer, THW );
 		}
 	}
 	else
 	{
 		if (th==1)
 		{
-			for ( i = 1; i < 10; i++ )
+			for ( i = 1; i < 11; i++ )
 			{
 				if ((bs>>i) == 1)
 				{
@@ -1521,10 +1523,8 @@ static str_formatData getFormatDataAXT( const UIN ompNT, const UIN bs, const UIN
 				ti = measure_time( t2, t1 );
 				tt = tt + ti;
 			}
-			char THW[5]; sprintf( THW, "%d", thw );
 			char BS[5];  sprintf( BS, "%d", bs );
-			strcpy( buffer, "faxtch1hw" );
-			strcat( buffer, THW );
+			strcpy( buffer, "faxtch1" );
 			strcat( buffer, "bs" );
 			strcat( buffer, BS );
 		}
@@ -1547,11 +1547,8 @@ static str_formatData getFormatDataAXT( const UIN ompNT, const UIN bs, const UIN
 				tt = tt + ti;
 			}
 			char TH[5];  sprintf( TH,  "%d", th  );
-			char THW[5]; sprintf( THW, "%d", thw );
 			strcpy( buffer, "faxtch" );
 			strcat( buffer, TH );
-			strcat( buffer, "hw" );
-			strcat( buffer, THW );
 		}
 	}
 	ti = tt / (double) NUM_ITE;
@@ -1724,7 +1721,7 @@ static __host__ str_res test_gaxtuh( const UIN cudaBlockSize, const str_matAXT m
 
 
 
-static __global__ void gaxtch1( const UIN log, const UIN lenAX, const FPT * ax, const UIN * hdr, FPT * y )
+static __global__ void gaxtch1( const UIN log, const FPT * ax, const UIN * hdr, FPT * y )
 {
 	const UIN tidBLCK = threadIdx.x;
 	const UIN widBLCK = tidBLCK >> 5;
@@ -1735,7 +1732,6 @@ static __global__ void gaxtch1( const UIN log, const UIN lenAX, const FPT * ax, 
 	       __shared__ FPT blk1[32];
 	extern __shared__ FPT blk2[];
 	      FPT vo = 0.0, v1 = 0.0, v2 = 0.0, v3 = 0.0;
-	//if (tidBLCK == 0) printf( "bidGRID:%7d, pAX:%7d, lenAX:%7d\n", blockIdx.x, pAX, lenAX );
 	// initialize auxiliary arrays
 	blk1[tidWARP] = 0.0;
 	blk2[tidBLCK] = 0.0;
@@ -1791,17 +1787,15 @@ static __host__ str_res test_gaxtch1( const UIN cudaBlockSize, const str_matAXT 
 	const UIN tn           = matAXT.tileN;
 	const UIN log          = matAXT.log;
 	const UIN cudaBlockNum = ( (tn*32) + cudaBlockSize - 1 ) / cudaBlockSize;
-
-	printf( "tn:    %7d\n", tn           );
-	printf( "cbn:   %7d\n", cudaBlockNum );
-	printf( "lenAX: %7d\n", matAXT.lenAX ); fflush(stdout);
-
-
+	const UIN devLenAX     = cudaBlockNum * 2 * cudaBlockSize;
+	const UIN devLenSEC    = cudaBlockNum     * cudaBlockSize;
 	// allocate memory on GPU
-	FPT * d_ax;  HANDLE_CUDA_ERROR( cudaMalloc( &d_ax,  matAXT.lenAX  * sizeof(FPT) ) ); TEST_POINTER( d_ax  );
-	UIN * d_hdr; HANDLE_CUDA_ERROR( cudaMalloc( &d_hdr, matAXT.lenSEC * sizeof(UIN) ) ); TEST_POINTER( d_hdr );
+	FPT * d_ax;  HANDLE_CUDA_ERROR( cudaMalloc( &d_ax,  devLenAX      * sizeof(FPT) ) ); TEST_POINTER( d_ax  );
+	UIN * d_hdr; HANDLE_CUDA_ERROR( cudaMalloc( &d_hdr, devLenSEC     * sizeof(UIN) ) ); TEST_POINTER( d_hdr );
 	FPT * d_res; HANDLE_CUDA_ERROR( cudaMalloc( &d_res, matAXT.nrows  * sizeof(FPT) ) ); TEST_POINTER( d_res );
 	// copy necessary arrays to device
+	HANDLE_CUDA_ERROR( cudaMemset( d_ax,  0, devLenAX  * sizeof(FPT) ) );
+	HANDLE_CUDA_ERROR( cudaMemset( d_hdr, 0, devLenSEC * sizeof(UIN) ) );
 	HANDLE_CUDA_ERROR( cudaMemcpy( d_ax,  matAXT.ax,  matAXT.lenAX  * sizeof(FPT), cudaMemcpyHostToDevice ) );
 	HANDLE_CUDA_ERROR( cudaMemcpy( d_hdr, matAXT.sec, matAXT.lenSEC * sizeof(UIN), cudaMemcpyHostToDevice ) );
 	// create events for time measuring
@@ -1814,7 +1808,7 @@ static __host__ str_res test_gaxtch1( const UIN cudaBlockSize, const str_matAXT 
 	{
 		HANDLE_CUDA_ERROR( cudaMemset( d_res, 0, matAXT.nrows  * sizeof(FPT) ) );
 		HANDLE_CUDA_ERROR( cudaEventRecord( cet1 ) );
-		gaxtch1 <<<cudaBlockNum, cudaBlockSize, (cudaBlockSize * sizeof(FPT))>>> ( log, matAXT.lenAX, d_ax, d_hdr, d_res );
+		gaxtch1 <<<cudaBlockNum, cudaBlockSize, (cudaBlockSize * sizeof(FPT))>>> ( log, d_ax, d_hdr, d_res );
 		HANDLE_CUDA_ERROR( cudaEventRecord( cet2 ) );
 		HANDLE_CUDA_ERROR( cudaEventSynchronize( cet2 ) );
 		HANDLE_CUDA_ERROR( cudaEventElapsedTime( &ti, cet1, cet2 ) );
@@ -1903,21 +1897,21 @@ int main( int argc, char ** argv )
 	// K1 format  -------------------------------------------------------------------------------------------------------------------
 
 	// AXC format  ------------------------------------------------------------------------------------------------------------------
-	str_matAXC matAXC; str_formatData fd03 = getFormatDataAXC( sia.ompMT, 32, matCSR, vr, &matAXC );
+	str_matAXC matAXC; str_formatData fd03 = getFormatDataAXC( sia.ompMT, TILE_HW, matCSR, vr, &matAXC );
 	str_res sr05 = test_gaxc( sia.cbs, matAXC, yr );
 	// AXC format  ------------------------------------------------------------------------------------------------------------------
 
 	// AXT format  ------------------------------------------------------------------------------------------------------------------
-	str_matAXT matAXT01;  str_formatData fd04 = getFormatDataAXT( sia.ompMT, sia.cbs, 32,  1, "UNC", matCSR, vr, &matAXT01 );
-	str_matAXT matAXT02;  str_formatData fd05 = getFormatDataAXT( sia.ompMT, sia.cbs, 32,  4, "UNC", matCSR, vr, &matAXT02 );
-	str_matAXT matAXT03;  str_formatData fd06 = getFormatDataAXT( sia.ompMT, sia.cbs, 32,  8, "UNC", matCSR, vr, &matAXT03 );
-	str_matAXT matAXT04;  str_formatData fd07 = getFormatDataAXT( sia.ompMT, sia.cbs, 32, 12, "UNC", matCSR, vr, &matAXT04 );
-	str_matAXT matAXT05;  str_formatData fd08 = getFormatDataAXT( sia.ompMT, sia.cbs, 32, 16, "UNC", matCSR, vr, &matAXT05 );
-	str_matAXT matAXT06;  str_formatData fd09 = getFormatDataAXT( sia.ompMT, sia.cbs, 32, 20, "UNC", matCSR, vr, &matAXT06 );
-	str_matAXT matAXT07;  str_formatData fd10 = getFormatDataAXT( sia.ompMT, sia.cbs, 32, 24, "UNC", matCSR, vr, &matAXT07 );
-	str_matAXT matAXT08;  str_formatData fd11 = getFormatDataAXT( sia.ompMT, sia.cbs, 32, 28, "UNC", matCSR, vr, &matAXT08 );
-	str_matAXT matAXT09;  str_formatData fd12 = getFormatDataAXT( sia.ompMT, sia.cbs, 32, 32, "UNC", matCSR, vr, &matAXT09 );
-	str_matAXT matAXT10;  str_formatData fd13 = getFormatDataAXT( sia.ompMT, sia.cbs, 32,  1, "COM", matCSR, vr, &matAXT10 );
+	str_matAXT matAXT01;  str_formatData fd04 = getFormatDataAXT( sia.ompMT, sia.cbs, TILE_HW,  1, "UNC", matCSR, vr, &matAXT01 );
+	str_matAXT matAXT02;  str_formatData fd05 = getFormatDataAXT( sia.ompMT, sia.cbs, TILE_HW,  4, "UNC", matCSR, vr, &matAXT02 );
+	str_matAXT matAXT03;  str_formatData fd06 = getFormatDataAXT( sia.ompMT, sia.cbs, TILE_HW,  8, "UNC", matCSR, vr, &matAXT03 );
+	str_matAXT matAXT04;  str_formatData fd07 = getFormatDataAXT( sia.ompMT, sia.cbs, TILE_HW, 12, "UNC", matCSR, vr, &matAXT04 );
+	str_matAXT matAXT05;  str_formatData fd08 = getFormatDataAXT( sia.ompMT, sia.cbs, TILE_HW, 16, "UNC", matCSR, vr, &matAXT05 );
+	str_matAXT matAXT06;  str_formatData fd09 = getFormatDataAXT( sia.ompMT, sia.cbs, TILE_HW, 20, "UNC", matCSR, vr, &matAXT06 );
+	str_matAXT matAXT07;  str_formatData fd10 = getFormatDataAXT( sia.ompMT, sia.cbs, TILE_HW, 24, "UNC", matCSR, vr, &matAXT07 );
+	str_matAXT matAXT08;  str_formatData fd11 = getFormatDataAXT( sia.ompMT, sia.cbs, TILE_HW, 28, "UNC", matCSR, vr, &matAXT08 );
+	str_matAXT matAXT09;  str_formatData fd12 = getFormatDataAXT( sia.ompMT, sia.cbs, TILE_HW, 32, "UNC", matCSR, vr, &matAXT09 );
+	str_matAXT matAXT10;  str_formatData fd13 = getFormatDataAXT( sia.ompMT, sia.cbs, TILE_HW,  1, "COM", matCSR, vr, &matAXT10 );
 	str_res sr06 = test_gaxtuh1( sia.cbs, matAXT01, yr );
 	str_res sr07 = test_gaxtuh ( sia.cbs, matAXT02, yr );
 	str_res sr08 = test_gaxtuh ( sia.cbs, matAXT03, yr );
