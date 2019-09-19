@@ -27,12 +27,12 @@ MAT_LST05="M11_pdb1HYS.bin M12_hamrle3.bin M13_consph.bin M14_g3_circuit.bin M15
 MAT_LST06="M21_fullChip.bin M22_e005.csr M23_delaunay_n23.bin M24_circuit5M.bin M25_Serena.bin"
 MAT_LST07="M00_e001.csr M01_scircuit.bin M02_mac_econ_fwd500.bin M03_e002.csr M04_mc2depi.bin M05_rma10.bin M06_cop20k_A.bin M07_webbase-1M.bin M08_shipsec1.bin M09_e003.csr M10_cant.bin M11_pdb1HYS.bin M12_hamrle3.bin M13_consph.bin M14_g3_circuit.bin M15_thermal2.bin M16_e004.csr M17_pwtk.bin M18_kkt_power.bin M19_memchip.bin M20_in-2004.bin M21_fullChip.bin M22_e005.csr M23_delaunay_n23.bin M24_circuit5M.bin M25_Serena.bin"
 MAT_LST08="M06_cop20k_A.bin"
-MAT_LST=${MAT_LST00}
+MAT_LST=${MAT_LST07}
 SLEEP_TIME=30
 KFSL=6300
 KFSU=6400
-CFSL=6600
-CFSU=6700
+CFSL=9550
+CFSU=9650
 
 
 
@@ -71,7 +71,7 @@ if grep -q "indy2" <<< "${HOST}"; then
 	echo "host: [CIRRUS]"        >> ${EXE_LOG}
 	echo "date: [$(date +"%F")]" >> ${EXE_LOG}
 	echo " "                     >> ${EXE_LOG}
-	CIRRUS_DIR="${ROOT_DIR}/cirrus_$(date +"%F")"
+	CIRRUS_DIR="${ROOT_DIR}/CIRRUS_[$(date +"%F")]"
 	STA_DIR=${CIRRUS_DIR}/statistics
 	LCH_DIR=${CIRRUS_DIR}/launchers
 	ERR_DIR=${CIRRUS_DIR}/errors
