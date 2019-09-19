@@ -1874,7 +1874,7 @@ static __global__ void gaxtch( const UIN LOG, const UIN TH, const FPT * ax, cons
 		if (ro)
 		{
 			r = ro >> LOG;
-			o = ro & (TH-1);
+			o = (ro & (TH-1)) * 32;
 			v1 = blk2[i+o] - blk2[i] + blk1[i];
 			atomicAdd( &y[r], v1 );
 		}
