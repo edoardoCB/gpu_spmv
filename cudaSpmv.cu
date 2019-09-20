@@ -1870,7 +1870,7 @@ static __global__ void gaxtch( const UIN LOG, const UIN TH, const FPT * ax, cons
 	__syncthreads();
 	for ( i = tidWARP; i < (tidWARP + TH*32); i = i + 32 )
 	{
-		ro = hdr[i];
+		ro = hdr[widGRID*TH*32+i];
 		if (ro)
 		{
 			r = ro >> LOG;
@@ -2019,10 +2019,10 @@ int main( int argc, char ** argv )
 	str_matAXT matAXT10;  str_formatData fd13 = getFormatDataAXT( sia.ompMT, sia.cbs, TILE_HW,   1, "COM", matCSR, vr, &matAXT10 );
 	str_matAXT matAXT11;  str_formatData fd14 = getFormatDataAXT( sia.ompMT, sia.cbs, TILE_HW,   4, "COM", matCSR, vr, &matAXT11 );
 	str_matAXT matAXT12;  str_formatData fd15 = getFormatDataAXT( sia.ompMT, sia.cbs, TILE_HW,   8, "COM", matCSR, vr, &matAXT12 );
-	str_matAXT matAXT13;  str_formatData fd16 = getFormatDataAXT( sia.ompMT, sia.cbs, TILE_HW,  16, "COM", matCSR, vr, &matAXT13 );
-	str_matAXT matAXT14;  str_formatData fd17 = getFormatDataAXT( sia.ompMT, sia.cbs, TILE_HW,  32, "COM", matCSR, vr, &matAXT14 );
-	str_matAXT matAXT15;  str_formatData fd18 = getFormatDataAXT( sia.ompMT, sia.cbs, TILE_HW,  64, "COM", matCSR, vr, &matAXT15 );
-	str_matAXT matAXT16;  str_formatData fd19 = getFormatDataAXT( sia.ompMT, sia.cbs, TILE_HW, 128, "COM", matCSR, vr, &matAXT16 );
+//	str_matAXT matAXT13;  str_formatData fd16 = getFormatDataAXT( sia.ompMT, sia.cbs, TILE_HW,  16, "COM", matCSR, vr, &matAXT13 );
+//	str_matAXT matAXT14;  str_formatData fd17 = getFormatDataAXT( sia.ompMT, sia.cbs, TILE_HW,  32, "COM", matCSR, vr, &matAXT14 );
+//	str_matAXT matAXT15;  str_formatData fd18 = getFormatDataAXT( sia.ompMT, sia.cbs, TILE_HW,  64, "COM", matCSR, vr, &matAXT15 );
+//	str_matAXT matAXT16;  str_formatData fd19 = getFormatDataAXT( sia.ompMT, sia.cbs, TILE_HW, 128, "COM", matCSR, vr, &matAXT16 );
 	str_res sr06 = test_gaxtuh1( sia.cbs, matAXT01, yr );
 	str_res sr07 = test_gaxtuh ( sia.cbs, matAXT02, yr );
 	str_res sr08 = test_gaxtuh ( sia.cbs, matAXT03, yr );
@@ -2035,10 +2035,10 @@ int main( int argc, char ** argv )
 	str_res sr15 = test_gaxtch1( sia.cbs, matAXT10, yr );
 	str_res sr16 = test_gaxtch ( sia.cbs, matAXT11, yr );
 	str_res sr17 = test_gaxtch ( sia.cbs, matAXT12, yr );
-	str_res sr18 = test_gaxtch ( sia.cbs, matAXT13, yr );
-	str_res sr19 = test_gaxtch ( sia.cbs, matAXT14, yr );
-	str_res sr20 = test_gaxtch ( sia.cbs, matAXT15, yr );
-	str_res sr21 = test_gaxtch ( sia.cbs, matAXT16, yr );
+//	str_res sr18 = test_gaxtch ( sia.cbs, matAXT13, yr );
+//	str_res sr19 = test_gaxtch ( sia.cbs, matAXT14, yr );
+//	str_res sr20 = test_gaxtch ( sia.cbs, matAXT15, yr );
+//	str_res sr21 = test_gaxtch ( sia.cbs, matAXT16, yr );
 	// AXT format  ------------------------------------------------------------------------------------------------------------------
 
 	HDL; printf( "formats' data\n" ); HDL;
@@ -2058,10 +2058,10 @@ int main( int argc, char ** argv )
 	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd13.name, ( fd13.mfp * 1e-6 ), fd13.beta, fd13.ct ); fflush(stdout);
 	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd14.name, ( fd14.mfp * 1e-6 ), fd14.beta, fd14.ct ); fflush(stdout);
 	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd15.name, ( fd15.mfp * 1e-6 ), fd15.beta, fd15.ct ); fflush(stdout);
-	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd16.name, ( fd16.mfp * 1e-6 ), fd16.beta, fd16.ct ); fflush(stdout);
-	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd17.name, ( fd17.mfp * 1e-6 ), fd17.beta, fd17.ct ); fflush(stdout);
-	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd18.name, ( fd18.mfp * 1e-6 ), fd18.beta, fd18.ct ); fflush(stdout);
-	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd19.name, ( fd19.mfp * 1e-6 ), fd19.beta, fd19.ct ); fflush(stdout);
+//	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd16.name, ( fd16.mfp * 1e-6 ), fd16.beta, fd16.ct ); fflush(stdout);
+//	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd17.name, ( fd17.mfp * 1e-6 ), fd17.beta, fd17.ct ); fflush(stdout);
+//	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd18.name, ( fd18.mfp * 1e-6 ), fd18.beta, fd18.ct ); fflush(stdout);
+//	printf( "%25s %20.2lf %10.2lf %20.6lf\n", fd19.name, ( fd19.mfp * 1e-6 ), fd19.beta, fd19.ct ); fflush(stdout);
 
 	HDL; printf( "SpMV kernels' results\n" ); HDL;
 	printf( "%25s %15s %8s %15s %13s %13s %10s\n", "kernel", "exeTime [s]", "Gflops", "ordTime [s]", "errAbs", "errRel", "rowInd" );
@@ -2082,10 +2082,10 @@ int main( int argc, char ** argv )
 	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr15.name, sr15.et, ( sr15.flops * 1e-9 ), sr15.ot, sr15.sErr.aErr, sr15.sErr.rErr, sr15.sErr.pos ); fflush(stdout);
 	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr16.name, sr16.et, ( sr16.flops * 1e-9 ), sr16.ot, sr16.sErr.aErr, sr16.sErr.rErr, sr16.sErr.pos ); fflush(stdout);
 	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr17.name, sr17.et, ( sr17.flops * 1e-9 ), sr17.ot, sr17.sErr.aErr, sr17.sErr.rErr, sr17.sErr.pos ); fflush(stdout);
-	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr18.name, sr18.et, ( sr18.flops * 1e-9 ), sr18.ot, sr18.sErr.aErr, sr18.sErr.rErr, sr18.sErr.pos ); fflush(stdout);
-	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr19.name, sr19.et, ( sr19.flops * 1e-9 ), sr19.ot, sr19.sErr.aErr, sr19.sErr.rErr, sr19.sErr.pos ); fflush(stdout);
-	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr20.name, sr20.et, ( sr20.flops * 1e-9 ), sr20.ot, sr20.sErr.aErr, sr20.sErr.rErr, sr20.sErr.pos ); fflush(stdout);
-	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr21.name, sr21.et, ( sr21.flops * 1e-9 ), sr21.ot, sr21.sErr.aErr, sr21.sErr.rErr, sr21.sErr.pos ); fflush(stdout);
+//	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr18.name, sr18.et, ( sr18.flops * 1e-9 ), sr18.ot, sr18.sErr.aErr, sr18.sErr.rErr, sr18.sErr.pos ); fflush(stdout);
+//	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr19.name, sr19.et, ( sr19.flops * 1e-9 ), sr19.ot, sr19.sErr.aErr, sr19.sErr.rErr, sr19.sErr.pos ); fflush(stdout);
+//	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr20.name, sr20.et, ( sr20.flops * 1e-9 ), sr20.ot, sr20.sErr.aErr, sr20.sErr.rErr, sr20.sErr.pos ); fflush(stdout);
+//	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr21.name, sr21.et, ( sr21.flops * 1e-9 ), sr21.ot, sr21.sErr.aErr, sr21.sErr.rErr, sr21.sErr.pos ); fflush(stdout);
 
 	return( EXIT_SUCCESS );
 }
