@@ -1721,7 +1721,7 @@ static __host__ str_res test_gaxtuh( const UIN cudaBlockSize, const str_matAXT m
 
 
 
-static __global__ void gaxtch1( const UIN log, const FPT * ax, const UIN * hdr, FPT * y )
+static __global__ void gaxtch1( const UIN LOG, const FPT * ax, const UIN * hdr, FPT * y )
 {
 	const UIN tidBLCK = threadIdx.x;
 	const UIN widBLCK = tidBLCK >> 5;
@@ -1759,7 +1759,7 @@ static __global__ void gaxtch1( const UIN log, const FPT * ax, const UIN * hdr, 
 		v3 = __shfl_up_sync( FULL_MASK, v2,  4 ); if (tidWARP >=  4) v2 = v2 + v3;
 		v3 = __shfl_up_sync( FULL_MASK, v2,  8 ); if (tidWARP >=  8) v2 = v2 + v3;
 		v3 = __shfl_up_sync( FULL_MASK, v2, 16 ); if (tidWARP >= 16) v2 = v2 + v3;
-		blk1[tidWARP] = v3;
+		blk1[tidWARP] = v2;
 	}
 	__syncthreads();
 	// update v1 with partial reductions from block's warp 0
@@ -1771,7 +1771,7 @@ static __global__ void gaxtch1( const UIN log, const FPT * ax, const UIN * hdr, 
 	// perform atomic addition to acumulate value in y[]
 	if (ro)
 	{
-		r  = ro >> log;
+		r  = ro >> LOG;
 		o  = ro & (blockDim.x - 1);
 		v1 = blk2[tidBLCK + o] - v1 + vo;
 		atomicAdd( &y[r], v1 );
