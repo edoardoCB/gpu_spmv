@@ -31,8 +31,8 @@ MAT_LST=${MAT_LST07}
 SLEEP_TIME=30
 KFSL=6300
 KFSU=6400
-CFSL=9550
-CFSU=9650
+CFSL=8800
+CFSU=9300
 
 
 
@@ -239,6 +239,7 @@ for MAT in ${MAT_LST}; do
 		done
 	fi
 	echo " " >> ${EXE_LOG}
+	rm -f ${mat}
 done
 
 
