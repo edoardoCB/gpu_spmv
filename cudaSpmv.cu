@@ -436,6 +436,7 @@ static void ncsr( const UIN ompNT, const str_matCSR matCSR, const FPT * vec, FPT
 		for ( j = matCSR.row[i]; j < matCSR.row[i+1]; j++ )
 		{
 			aux = aux + matCSR.val[j] * vec[matCSR.col[j]];
+			if (i == 13) printf( "rl:%d, pos:%d, mat:%20.10lf, vec:%20.10lf,pro:%20.10lf, red:%20.10lf\n", matCSR.row[i+1]-matCSR.row[i], j, matCSR.val[j], vec[matCSR.col[j]], matCSR.val[j]*vec[matCSR.col[j]], aux );
 		}
 		res[i] = aux;
 	}
@@ -1132,42 +1133,6 @@ typedef struct{ UIN nrows; UIN nnz; char mode[8]; UIN tileHW; UIN tileH; UIN log
 
 
 
-/*
-static void getArraysLenAXT( const str_matCSR matCSR, str_matAXT * matAXT )
-{
-	const UIN  nrows = matAXT->nrows;
-	const UIN    thw = matAXT->tileHW;
-	const UIN     th = matAXT->tileH;
-	const UIN    ths = thw * th;
-	const UIN grpLen = (th == 1) ? (thw) : (th) ;
-	char mode[8];
-	strcpy( mode, matAXT->mode );
-	      UIN rowID = 0, rowStartPos = 0, rowOffT, rowOffR, rowOffC, pos, rowLen, positions, columns, totalColumns = 0, totalTiles;
-	for ( ; rowID < nrows; rowID++ )
-	{
-		           rowOffT = ( (rowStartPos + ths)/ths ) - 1;
-		           rowOffR =    rowStartPos % th;
-		           rowOffC = ( (rowStartPos + th)/th ) - 1 - (rowOffT * thw);
-		               pos = rowOffT * (2 * ths) + rowOffR * (2 * thw) + rowOffC;
-		matAXT->con[rowID] = pos;
-		            rowLen = matCSR.rl[rowID];
-		         positions = ( strcmp( mode, "UNC" ) == 0 ) ? ( ( ( rowLen + grpLen - 1 ) / grpLen ) * grpLen ) : ( rowLen ) ;
-		           columns = ( positions + th - 1 ) / th;
-		      totalColumns = totalColumns + columns;
-		       rowStartPos = rowStartPos + positions;
-	}
-	     totalTiles = ( totalColumns + thw - 1 ) / thw;
-	 matAXT->tileN = totalTiles;
-	 matAXT->lenAX = totalTiles * 2 * ths;
-	if      ( (strcmp(mode, "UNC")==0) && (th==1) ) matAXT->lenSEC = totalTiles;
-	else if ( (strcmp(mode, "UNC")==0) && (th!=1) ) matAXT->lenSEC = totalTiles * thw;
-	else                                            matAXT->lenSEC = totalTiles * ths;
-	return;
-}
-*/
-
-
-
 static void getArraysLenAXT_UNC_H1( const str_matCSR matCSR, str_matAXT * matAXT )
 {
 	const UIN nrows = matAXT->nrows;
@@ -1848,49 +1813,31 @@ static __global__ void gaxtch( const UIN LOG, const UIN TH, const FPT * ax, cons
 	const UIN widGRID = tidGRID >> 5;
 	const UIN tidWARP = tidGRID & 31;
 	const UIN THS     = TH * 32;
-	      UIN a1_hdr  = widGRID * THS + tidWARP;
-	      UIN ro      = hdr[a1_hdr];
-	      UIN r       = ro >> LOG;
-	      UIN o       = (ro & (TH-1)) * 64;
-	const UIN TS      = 2 * THS;
-	      UIN a1_ax   = widGRID * TS + tidWARP;
-	      UIN a2_ax   = a1_ax + o;
-	const UIN a3_ax   = a1_ax + TS;
-	      UIN pAX = 0;
+	const UIN TS      = TH * 64;
+	const UIN wul     = (widGRID + 1) * TS;
+	      UIN a1_hdr, ro, r, o, a1_ax, a2_ax, p_ax;
 	      FPT red;
-
-		if (widGRID == 0) printf( "tidWARP:%3d, a1_ax:%3d, a2_ax:%3d, a3_ax:%3d, pAX:%3d\n", tidWARP, a1_ax, a2_ax, a3_ax, pAX );
-		red = 0.0;
-		for ( pAX = a1_ax; pAX < a2_ax; pAX = pAX + 64 )
+	a1_hdr = widGRID * THS + tidWARP;
+	ro     = hdr[a1_hdr];
+	r      = ro >> LOG;
+	o      = (ro & (TH-1)) * 64;
+	a1_ax  = widGRID * TS + tidWARP;
+	a2_ax  = a1_ax + o;
+	do {
+		red    = 0.0;
+		for ( p_ax = a1_ax; p_ax <= a2_ax; p_ax = p_ax + 64 )
 		{
-			red    = red + ax[pAX] * ax[pAX+32];
+			red    = red + ax[p_ax] * ax[p_ax+32];
+			if (r == 13) printf( "widGRID:%5d, tidGRID:%5d, tidWARP:%5d, a1_hdr:%5d, ro:%5d, a1_ax:%5d, a2_ax:%5d, p_ax:%5d, pro:%20.10lf, red:%20.10lf\n", widGRID, tidGRID, tidWARP, a1_hdr, ro, a1_ax, a2_ax, p_ax, ax[p_ax]*ax[p_ax+32], red );
 			a1_hdr = a1_hdr + 32;
 		}
-		if (widGRID == 0) printf( "tidWARP:%3d, a1_ax:%3d, a2_ax:%3d, a3_ax:%3d, pAX:%3d\n", tidWARP, a1_ax, a2_ax, a3_ax, pAX );
 		atomicAdd( &y[r], red );
-		a1_ax  = pAX;
 		ro     = hdr[a1_hdr];
 		r      = ro >> LOG;
 		o      = (ro & (TH-1)) * 64;
+		a1_ax  = p_ax;
 		a2_ax  = a1_ax + o;
-		if (widGRID == 0) printf( "tidWARP:%3d, a1_ax:%3d, a2_ax:%3d, a3_ax:%3d, pAX:%3d\n", tidWARP, a1_ax, a2_ax, a3_ax, pAX );
-
-//	do {
-//		if (widGRID == 0) printf( "tidWARP:%3d, a1_hdr:%3d, ro:%3d, r:%3d, o:%3d\n", tidWARP, a1_hdr, ro, r, o );
-//		red = 0.0;
-//		for ( pAX = a1_ax; pAX < a2_ax; pAX = pAX + 64 )
-//		{
-//			red    = red + ax[pAX] * ax[pAX+32];
-//			a1_hdr = a1_hdr + 32;
-//		}
-//		if (widGRID == 0) printf( "tidWARP:%3d, a1_ax:%3d, a2_ax:%3d, a3_ax:%3d, pAX:%3d\n", tidWARP, a1_ax, a2_ax, a3_ax, pAX );
-//		atomicAdd( &y[r], red );
-//		a1_ax  = pAX;
-//		ro     = hdr[a1_hdr];
-//		r      = ro >> LOG;
-//		a2_ax  = a1_ax + ((ro & (TH-1)) * 64);
-//	} while (pAX < a3_ax);
-
+	} while (p_ax <= wul);
 	return;
 }
 
@@ -1969,9 +1916,10 @@ static __host__ str_res test_gaxtch( const UIN cudaBlockSize, const str_matAXT m
 	UIN i;
 	for ( i = 0; i < NUM_ITE; i++ )
 	{
+		//gaxtch <<<cudaBlockNum, cudaBlockSize, (wpb * 2 * th * thw * sizeof(FPT))>>> ( wpb, log, th, d_ax, d_hdr, d_res );
 		HANDLE_CUDA_ERROR( cudaMemset( d_res, 0, matAXT.nrows  * sizeof(FPT) ) );
 		HANDLE_CUDA_ERROR( cudaEventRecord( cet1 ) );
-		gaxtch <<<cudaBlockNum, cudaBlockSize, (wpb * 2 * th * thw * sizeof(FPT))>>> ( log, th, d_ax, d_hdr, d_res );
+		gaxtch <<<cudaBlockNum, cudaBlockSize>>> ( log, th, d_ax, d_hdr, d_res );
 		HANDLE_CUDA_ERROR( cudaEventRecord( cet2 ) );
 		HANDLE_CUDA_ERROR( cudaEventSynchronize( cet2 ) );
 		HANDLE_CUDA_ERROR( cudaEventElapsedTime( &ti, cet1, cet2 ) );
@@ -1998,6 +1946,20 @@ static __host__ str_res test_gaxtch( const UIN cudaBlockSize, const str_matAXT m
 	sr.ot    = 0.0;
 	sr.flops = ( 2.0 * ( (double) matAXT.nnz ) ) / sr.et;
 	get_errors( matAXT.nrows, ref, res, &(sr.sErr) );
+
+
+for ( i = 0; i < 500; i++ )
+{
+	printf( "ax[%3d]:%20.10lf, hdr[%3d]:%6d\n", i, matAXT.ax[i], i, matAXT.sec[i] );
+}
+FPT dif;
+for ( i = 0; i < 14; i++ )
+{
+	dif = fabs( fabs(ref[i]) - fabs(res[i]) );
+	printf( "row:%7d, ref:%20.10lf, res:%20.10lf, dif:%20.10lf\n", i, ref[i], res[i], dif );
+}
+
+
 	// free cpu memory
 	free( res );
 	return( sr );
