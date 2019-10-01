@@ -236,13 +236,14 @@ static __host__ void printCudaDeviceProperties( int cudaDeviceID )
 
 
 
-typedef struct { UIN nrows; UIN nnz; UIN rmin; FPT rave; UIN rmax; FPT rsd; UIN bw; FPT * val; UIN * row; UIN * rowStart; UIN * rowEnd; UIN * col; UIN * rl; } str_matCSR;
+typedef struct { char name[48]; UIN nrows; UIN nnz; UIN rmin; FPT rave; UIN rmax; FPT rsd; UIN bw; FPT * val; UIN * row; UIN * rowStart; UIN * rowEnd; UIN * col; UIN * rl; } str_matCSR;
 
 
 
 static str_matCSR matrixReading( const char * matFileName )
 {
 	str_matCSR matCSR;
+	strcpy( matCSR.name, matFileName );
 	if ( strstr( matFileName, ".csr" ) != NULL )
 	{
 		FILE * fh;
@@ -1128,7 +1129,7 @@ static __host__ str_res test_gaxc( const UIN cudaBlockSize, const str_matAXC mat
 
 
 
-typedef struct{ UIN nrows; UIN nnz; char mode[8]; UIN tileHW; UIN tileH; UIN logTH; UIN tileN; UIN lenAX; UIN lenSEC; UIN lenCON; UIN log; UIN bs; FPT * ax; UIN * sec; UIN * con; } str_matAXT;
+typedef struct{ char name[48]; UIN nrows; UIN nnz; char mode[8]; UIN tileHW; UIN tileH; UIN logTH; UIN tileN; UIN lenAX; UIN lenSEC; UIN lenCON; UIN log; UIN bs; FPT * ax; UIN * sec; UIN * con; } str_matAXT;
 
 
 
@@ -1325,6 +1326,7 @@ static void getArraysAxSecAXT_COM_H1( const UIN bs, const UIN log, const UIN omp
 
 static void getArraysAxSecAXT_COM( const UIN ompNT, str_matCSR matCSR, const FPT * vec, str_matAXT * matAXT )
 {
+	strcpy( matAXT->name, matCSR.name );
 	const UIN nrows = matAXT->nrows;
 	const UIN th    = matAXT->tileH;
 	const UIN thw   = matAXT->tileHW;
