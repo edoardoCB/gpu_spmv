@@ -215,23 +215,198 @@ static void init_vec( const UIN ompNT, const UIN len, FPT * vec )
 
 
 
+static __device__ FPT warp_red1( const UIN tidWARP, const FPT val )
+{
+	UIN id = tidWARP + 1;
+	FPT v1 = val;
+	FPT v2 = __shfl_up_sync( FULL_MASK, v1,  1); if ((id% 2) == 0) v1 = v1 + v2;
+	    v2 = __shfl_up_sync( FULL_MASK, v1,  2); if ((id% 4) == 0) v1 = v1 + v2;
+	    v2 = __shfl_up_sync( FULL_MASK, v1,  4); if ((id% 8) == 0) v1 = v1 + v2;
+	    v2 = __shfl_up_sync( FULL_MASK, v1,  8); if ((id%16) == 0) v1 = v1 + v2;
+	    v2 = __shfl_up_sync( FULL_MASK, v1, 16); if ((id%32) == 0) v1 = v1 + v2;
+	return( v1 );
+}
+
+
+
+static __device__ FPT warp_red2( const UIN tidWARP, const FPT val )
+{
+	FPT v1 = val;
+	FPT v2 = __shfl_up_sync( FULL_MASK, v1,  1); if (tidWARP >=  1) v1 = v1 + v2;
+	    v2 = __shfl_up_sync( FULL_MASK, v1,  2); if (tidWARP >=  2) v1 = v1 + v2;
+	    v2 = __shfl_up_sync( FULL_MASK, v1,  4); if (tidWARP >=  4) v1 = v1 + v2;
+	    v2 = __shfl_up_sync( FULL_MASK, v1,  8); if (tidWARP >=  8) v1 = v1 + v2;
+	    v2 = __shfl_up_sync( FULL_MASK, v1, 16); if (tidWARP >= 16) v1 = v1 + v2;
+	return( v1 );
+}
+
+
+static __device__ FPT warp_scan1( const UIN tidWARP, const FPT val )
+{
+	FPT v1 = val;
+	FPT v2 = __shfl_up_sync( FULL_MASK, v1,  1); if (tidWARP >=  1) v1 = v1 + v2;
+	    v2 = __shfl_up_sync( FULL_MASK, v1,  2); if (tidWARP >=  2) v1 = v1 + v2;
+	    v2 = __shfl_up_sync( FULL_MASK, v1,  4); if (tidWARP >=  4) v1 = v1 + v2;
+	    v2 = __shfl_up_sync( FULL_MASK, v1,  8); if (tidWARP >=  8) v1 = v1 + v2;
+	    v2 = __shfl_up_sync( FULL_MASK, v1, 16); if (tidWARP >= 16) v1 = v1 + v2;
+	return( v1 );
+}
+
+
+
+static __device__ FPT warp_scan2( const UIN tidWARP, const FPT val )
+{
+	FPT v1 = val;
+	FPT v2;
+	UIN i;
+	for ( i = 1; i <=16; i = i * 2 )
+	{
+		v2 = __shfl_up_sync( FULL_MASK, v1, i );
+		if (tidWARP >= i) v1 = v1 + v2;
+	}
+	return( v1 );
+}
+
+
+
+static __device__ FPT warp_scan3( const UIN tidWARP, const FPT val )
+{
+	UIN id = tidWARP + 1;
+	FPT v1 = val;
+	FPT v2 = __shfl_up_sync( FULL_MASK, v1, 1 );
+	if (id ==  2) v1 = v1 + v2;
+	if (id ==  4) v1 = v1 + v2;
+	if (id ==  6) v1 = v1 + v2;
+	if (id ==  8) v1 = v1 + v2;
+	if (id == 10) v1 = v1 + v2;
+	if (id == 12) v1 = v1 + v2;
+	if (id == 14) v1 = v1 + v2;
+	if (id == 16) v1 = v1 + v2;
+	if (id == 18) v1 = v1 + v2;
+	if (id == 20) v1 = v1 + v2;
+	if (id == 22) v1 = v1 + v2;
+	if (id == 24) v1 = v1 + v2;
+	if (id == 26) v1 = v1 + v2;
+	if (id == 28) v1 = v1 + v2;
+	if (id == 30) v1 = v1 + v2;
+	if (id == 32) v1 = v1 + v2;
+	v2 = __shfl_up_sync( FULL_MASK, v1,  2 );
+	if (id ==  4) v1 = v1 + v2;
+	if (id ==  8) v1 = v1 + v2;
+	if (id == 12) v1 = v1 + v2;
+	if (id == 16) v1 = v1 + v2;
+	if (id == 20) v1 = v1 + v2;
+	if (id == 24) v1 = v1 + v2;
+	if (id == 28) v1 = v1 + v2;
+	if (id == 32) v1 = v1 + v2;
+	v2 = __shfl_up_sync( FULL_MASK, v1,  4 );
+	if (id ==  8) v1 = v1 + v2;
+	if (id == 16) v1 = v1 + v2;
+	if (id == 24) v1 = v1 + v2;
+	if (id == 32) v1 = v1 + v2;
+	v2 = __shfl_up_sync( FULL_MASK, v1,  8 );
+	if (id == 16) v1 = v1 + v2;
+	if (id == 32) v1 = v1 + v2;
+	v2 = __shfl_up_sync( FULL_MASK, v1, 16 );
+	if (id == 32) v1 = v1 + v2;
+	v2 = __shfl_up_sync( FULL_MASK, v1, 31 );
+	if (tidWARP==31) v1 = v2;
+	FPT v3  = v1;
+	v2 = __shfl_down_sync( FULL_MASK, v1, 16 );
+	if (id == 16) v1 = v2;
+	v2 = __shfl_up_sync  ( FULL_MASK,  v3, 16 );
+	if (id == 32) v1 = v1 + v2;
+	v3  = v1;
+	v2 = __shfl_down_sync( FULL_MASK, v1,  8 );
+	if (id ==  8) v1 = v2;
+	if (id == 24) v1 = v2;
+	v2 = __shfl_up_sync  ( FULL_MASK,  v3,  8 );
+	if (id == 16) v1 = v1 + v2;
+	if (id == 32) v1 = v1 + v2;
+	v3  = v1;
+	v2 = __shfl_down_sync( FULL_MASK, v1,  4 );
+	if (id ==  4) v1 = v2;
+	if (id == 12) v1 = v2;
+	if (id == 20) v1 = v2;
+	if (id == 28) v1 = v2;
+	v2 = __shfl_up_sync  ( FULL_MASK,  v3,  4 );
+	if (id ==  8) v1 = v1 + v2;
+	if (id == 16) v1 = v1 + v2;
+	if (id == 24) v1 = v1 + v2;
+	if (id == 32) v1 = v1 + v2;
+	v3  = v1;
+	v2 = __shfl_down_sync( FULL_MASK, v1,  2 );
+	if (id ==  2) v1 = v2;
+	if (id ==  6) v1 = v2;
+	if (id == 10) v1 = v2;
+	if (id == 14) v1 = v2;
+	if (id == 18) v1 = v2;
+	if (id == 22) v1 = v2;
+	if (id == 26) v1 = v2;
+	if (id == 30) v1 = v2;
+	v2 = __shfl_up_sync  ( FULL_MASK,  v3,  2 );
+	if (id ==  4) v1 = v1 + v2;
+	if (id ==  8) v1 = v1 + v2;
+	if (id == 12) v1 = v1 + v2;
+	if (id == 16) v1 = v1 + v2;
+	if (id == 20) v1 = v1 + v2;
+	if (id == 24) v1 = v1 + v2;
+	if (id == 28) v1 = v1 + v2;
+	if (id == 32) v1 = v1 + v2;
+	v3  = v1;
+	v2 = __shfl_down_sync( FULL_MASK, v1,  1 );
+	if (id ==  1) v1 = v2;
+	if (id ==  3) v1 = v2;
+	if (id ==  5) v1 = v2;
+	if (id ==  7) v1 = v2;
+	if (id ==  9) v1 = v2;
+	if (id == 11) v1 = v2;
+	if (id == 13) v1 = v2;
+	if (id == 15) v1 = v2;
+	if (id == 17) v1 = v2;
+	if (id == 19) v1 = v2;
+	if (id == 21) v1 = v2;
+	if (id == 23) v1 = v2;
+	if (id == 25) v1 = v2;
+	if (id == 27) v1 = v2;
+	if (id == 29) v1 = v2;
+	if (id == 31) v1 = v2;
+	v2 = __shfl_up_sync  ( FULL_MASK,  v3,  1 );
+	if (id ==  2) v1 = v1 + v2;
+	if (id ==  4) v1 = v1 + v2;
+	if (id ==  6) v1 = v1 + v2;
+	if (id ==  8) v1 = v1 + v2;
+	if (id == 10) v1 = v1 + v2;
+	if (id == 12) v1 = v1 + v2;
+	if (id == 14) v1 = v1 + v2;
+	if (id == 16) v1 = v1 + v2;
+	if (id == 18) v1 = v1 + v2;
+	if (id == 20) v1 = v1 + v2;
+	if (id == 22) v1 = v1 + v2;
+	if (id == 24) v1 = v1 + v2;
+	if (id == 26) v1 = v1 + v2;
+	if (id == 28) v1 = v1 + v2;
+	if (id == 30) v1 = v1 + v2;
+	if (id == 32) v1 = v1 + v2;
+	__syncthreads();
+	return( v1 );
+}
+
+
+
 static __global__ void scan1( FPT * a  )
 {
 	const UIN tidBLCK = threadIdx.x;
 	const UIN tidWARP = tidBLCK & 31;
 	const UIN widGRID = tidBLCK >> 5;
 	      FPT v1      = a[tidBLCK];
-	      FPT v2, v3;
+	      FPT v2;
 	__shared__ FPT blk1[32];
 
 	if (widGRID == 0) blk1[tidWARP] = 0.0;
 	__syncthreads();
 
-	v2 = __shfl_up_sync( FULL_MASK, v1,  1 ); if (tidWARP >=  1) v1 = v1 + v2;
-	v2 = __shfl_up_sync( FULL_MASK, v1,  2 ); if (tidWARP >=  2) v1 = v1 + v2;
-	v2 = __shfl_up_sync( FULL_MASK, v1,  4 ); if (tidWARP >=  4) v1 = v1 + v2;
-	v2 = __shfl_up_sync( FULL_MASK, v1,  8 ); if (tidWARP >=  8) v1 = v1 + v2;
-	v2 = __shfl_up_sync( FULL_MASK, v1, 16 ); if (tidWARP >= 16) v1 = v1 + v2;
+	v1 = warp_scan1( tidWARP, v1 );
 	__syncthreads();
 
 	if (tidWARP == 31) blk1[widGRID] = v1;
@@ -240,11 +415,7 @@ static __global__ void scan1( FPT * a  )
 	if (widGRID == 0)
 	{
 		v2 = blk1[tidWARP];
-		v3 = __shfl_up_sync( FULL_MASK, v2,  1 ); if (tidWARP >=  1) v2 = v2 + v3;
-		v3 = __shfl_up_sync( FULL_MASK, v2,  2 ); if (tidWARP >=  2) v2 = v2 + v3;
-		v3 = __shfl_up_sync( FULL_MASK, v2,  4 ); if (tidWARP >=  4) v2 = v2 + v3;
-		v3 = __shfl_up_sync( FULL_MASK, v2,  8 ); if (tidWARP >=  8) v2 = v2 + v3;
-		v3 = __shfl_up_sync( FULL_MASK, v2, 16 ); if (tidWARP >= 16) v2 = v2 + v3;
+		v2 = warp_scan1( tidWARP, v2 );
 		blk1[tidWARP] = v2;
 	}
 	__syncthreads();
@@ -258,7 +429,77 @@ static __global__ void scan1( FPT * a  )
 
 
 
-typedef struct { double t; FPT r; } str_res;
+static __global__ void scan2( FPT * a )
+{
+	const UIN tidBLCK = threadIdx.x;
+	const UIN tidWARP = (tidBLCK & 31);
+	const UIN widGRID = tidBLCK >> 5;
+	      FPT v1      =  a[tidBLCK];
+	      FPT v2;
+	__shared__ FPT blk1[32];
+
+	if (widGRID == 0) blk1[tidWARP] = 0.0;
+	__syncthreads();
+
+	v1 = warp_scan2( tidWARP, v1 );
+	__syncthreads();
+
+	if (tidWARP == 31) blk1[widGRID] = v1;
+	__syncthreads();
+
+	if (widGRID == 0)
+	{
+		v2 = blk1[tidWARP];
+		v2 = warp_scan2( tidWARP, v2 );
+		blk1[tidWARP] = v2;
+	}
+	__syncthreads();
+
+	if (widGRID >= 1) v1 = v1 + blk1[widGRID-1];
+	__syncthreads();
+
+	a[tidBLCK] = v1;
+	return;
+}
+
+
+
+static __global__ void scan3( FPT * a )
+{
+	const UIN tidBLCK = threadIdx.x;
+	const UIN tidWARP = (tidBLCK & 31);
+	const UIN widGRID = tidBLCK >> 5;
+	      FPT v1      =  a[tidBLCK];
+	      FPT v2, v3 = 0.0;
+	__shared__ FPT blk1[32];
+
+	if (widGRID == 0) blk1[tidWARP] = 0.0;
+	__syncthreads();
+
+	v1 = warp_scan3( tidWARP, v1 );
+	__syncthreads();
+
+	if (tidWARP == 31) blk1[widGRID] = v1;
+	__syncthreads();
+
+	if (widGRID == 0)
+	{
+		v2 = blk1[tidWARP];
+		v3 = warp_scan3( tidWARP, v2 );
+		blk1[tidWARP] = v3;
+	}
+	__syncthreads();
+
+	if (widGRID >= 1) v1 = v1 + blk1[widGRID-1];
+	__syncthreads();
+
+	a[tidBLCK] = v1;
+	return;
+}
+
+
+
+typedef struct { char n[48]; double t; FPT r; } str_res;
 
 
 
@@ -285,55 +526,10 @@ static __host__ str_res test_scan1( const UIN cbs, const UIN al, FPT * array )
 	HANDLE_CUDA_ERROR( cudaMemcpy( array, d_a, al * sizeof(FPT), cudaMemcpyDeviceToHost ) );
 	HANDLE_CUDA_ERROR( cudaFree( d_a ) );
 	str_res sr;
+	strcpy( sr.n, "scan1" );
 	sr.t = (double) tt / (double) NUM_ITE;
 	sr.r = array[al-1];
 	return( sr );
-}
-
-
-
-static __global__ void scan2( FPT * a  )
-{
-	const UIN tidBLCK =  threadIdx.x;
-	const UIN tidWARP =  tidBLCK & 31;
-	const UIN id2     =  tidWARP + 1;
-	const UIN widGRID =  tidBLCK >> 5;
-	      FPT v1      =  a[tidBLCK];
-	      FPT v2, v3;
-	__shared__ FPT blk1[32];
-
-	if (widGRID == 0) blk1[tidWARP] = 0.0;
-	__syncthreads();
-
-	v2 = __shfl_up_sync( FULL_MASK, v1,  1 ); if ((id2% 2) ==  0) v1 = v1 + v2;
-	v2 = __shfl_up_sync( FULL_MASK, v1,  2 ); if ((id2% 4) ==  0) v1 = v1 + v2;
-	v2 = __shfl_up_sync( FULL_MASK, v1,  4 ); if ((id2% 8) ==  0) v1 = v1 + v2;
-	v2 = __shfl_up_sync( FULL_MASK, v1,  8 ); if ((id2%16) ==  0) v1 = v1 + v2;
-	v2 = __shfl_up_sync( FULL_MASK, v1, 16 ); if ((id2%32) ==  0) v1 = v1 + v2;
-	__syncthreads();
-
-	printf( "tidWARP:%2d, id2:%d, v1:%4.0lf\n", tidWARP, id2, v1 );
-
-//	if (tidWARP == 31) blk1[widGRID] = v1;
-//	__syncthreads();
-//
-//	if (widGRID == 0)
-//	{
-//		v2 = blk1[tidWARP];
-//		v3 = __shfl_up_sync( FULL_MASK, v2,  1 ); if (tidWARP >=  1) v2 = v2 + v3;
-//		v3 = __shfl_up_sync( FULL_MASK, v2,  2 ); if (tidWARP >=  2) v2 = v2 + v3;
-//		v3 = __shfl_up_sync( FULL_MASK, v2,  4 ); if (tidWARP >=  4) v2 = v2 + v3;
-//		v3 = __shfl_up_sync( FULL_MASK, v2,  8 ); if (tidWARP >=  8) v2 = v2 + v3;
-//		v3 = __shfl_up_sync( FULL_MASK, v2, 16 ); if (tidWARP >= 16) v2 = v2 + v3;
-//		blk1[tidWARP] = v2;
-//	}
-//	__syncthreads();
-//
-//	if (widGRID >= 1) v1 = v1 + blk1[widGRID-1];
-//	__syncthreads();
-
-	a[tidBLCK] = v1;
-	return;
 }
 
 
@@ -361,6 +557,38 @@ static __host__ str_res test_scan2( const UIN cbs, const UIN al, FPT * array )
 	HANDLE_CUDA_ERROR( cudaMemcpy( array, d_a, al * sizeof(FPT), cudaMemcpyDeviceToHost ) );
 	HANDLE_CUDA_ERROR( cudaFree( d_a ) );
 	str_res sr;
+	strcpy( sr.n, "scan2" );
+	sr.t = (double) tt / (double) NUM_ITE;
+	sr.r = array[al-1];
+	return( sr );
+}
+
+
+
+static __host__ str_res test_scan3( const UIN cbs, const UIN al, FPT * array )
+{
+	const UIN cbn = (al + cbs - 1) / cbs;
+	FPT * d_a; HANDLE_CUDA_ERROR( cudaMalloc( &d_a, al * sizeof(FPT) ) ); TEST_POINTER( d_a );
+	cudaEvent_t cet1; HANDLE_CUDA_ERROR( cudaEventCreate( &cet1 ) );
+	cudaEvent_t cet2; HANDLE_CUDA_ERROR( cudaEventCreate( &cet2 ) );
+	float ti = 0.0f, tt = 0.0f;
+	UIN i;
+	for ( i = 0; i < NUM_ITE; i++ )
+	{
+		HANDLE_CUDA_ERROR( cudaMemcpy( d_a, array, al * sizeof(FPT), cudaMemcpyHostToDevice ) );
+		HANDLE_CUDA_ERROR( cudaEventRecord( cet1 ) );
+		scan3 <<<cbn, cbs>>> ( d_a );
+		HANDLE_CUDA_ERROR( cudaEventRecord( cet2 ) );
+		HANDLE_CUDA_ERROR( cudaEventSynchronize( cet2 ) );
+		HANDLE_CUDA_ERROR( cudaEventElapsedTime( &ti, cet1, cet2 ) );
+		tt = tt + ti;
+	}
+	HANDLE_CUDA_ERROR( cudaEventDestroy( cet1 ) );
+	HANDLE_CUDA_ERROR( cudaEventDestroy( cet2 ) );
+	HANDLE_CUDA_ERROR( cudaMemcpy( array, d_a, al * sizeof(FPT), cudaMemcpyDeviceToHost ) );
+	HANDLE_CUDA_ERROR( cudaFree( d_a ) );
+	str_res sr;
+	strcpy( sr.n, "scan3" );
 	sr.t = (double) tt / (double) NUM_ITE;
 	sr.r = array[al-1];
 	return( sr );
@@ -396,16 +624,26 @@ int main( int argc, char ** argv )
 		printf( "cudaDeviceSelected:                               %d <-------------------\n", cudaDeviceID ); fflush(stdout);
 	}
 
-	FPT * array = (FPT *) calloc( sia.al, sizeof(FPT) ); TEST_POINTER( array );
-	init_vec( sia.ompMT, sia.al, array );
-	str_res sr1 = test_scan1( sia.cbs, sia.al, array );
-	init_vec( sia.ompMT, sia.al, array );
-	str_res sr2 = test_scan2( sia.cbs, sia.al, array );
+	FPT * array1 = (FPT *) calloc( sia.al, sizeof(FPT) ); TEST_POINTER( array1 );
+	FPT * array2 = (FPT *) calloc( sia.al, sizeof(FPT) ); TEST_POINTER( array2 );
+	FPT * array3 = (FPT *) calloc( sia.al, sizeof(FPT) ); TEST_POINTER( array3 );
+	init_vec( sia.ompMT, sia.al, array1 );
+	init_vec( sia.ompMT, sia.al, array2 );
+	init_vec( sia.ompMT, sia.al, array3 );
+	str_res sr1 = test_scan1( sia.cbs, sia.al, array1 );
+	str_res sr2 = test_scan2( sia.cbs, sia.al, array2 );
+	str_res sr3 = test_scan3( sia.cbs, sia.al, array3 );
 
 	HDL; printf( "results\n" ); HDL;
-	printf( "%8s %13s\n", "result", "time" );
-	printf( "%8.0lf %13.8lf\n", sr1.r, sr1.t );
-	printf( "%8.0lf %13.8lf\n", sr2.r, sr2.t );
+	printf( "%10s %8s %13s\n", "function", "reduction", "time" );
+	printf( "%10s %8.0lf %13.8lf\n", sr1.n, sr1.r, sr1.t );
+	printf( "%10s %8.0lf %13.8lf\n", sr2.n, sr2.r, sr2.t );
+	printf( "%10s %8.0lf %13.8lf\n", sr3.n, sr3.r, sr3.t );
+
+//	UIN i = 0;
+//	for ( ; i < sia.al; i++ )
+//		printf( "%4d %4.0lf %4.0lf %4.0lf\n", i, array1[i], array2[i], array3[i] );
+
 
 	return( EXIT_SUCCESS );
 }
