@@ -1695,7 +1695,7 @@ static __global__ void gaxtch1( const UIN LOG, const FPT * ax, const UIN * hdr, 
 	const UIN tidWARP = tidBLCK & 31;
 	const UIN pAX     = blockIdx.x * 2 * blockDim.x + widBLCK * 64 + tidWARP;
 	const UIN ro      = hdr[blockIdx.x * blockDim.x + tidBLCK];
-	      UIN r, o;
+	      UIN r, o, i;
 	       __shared__ FPT blk1[32];
 	extern __shared__ FPT blk2[];
 	      FPT vo = 0.0, v1 = 0.0, v2 = 0.0, v3 = 0.0;
@@ -1708,11 +1708,11 @@ static __global__ void gaxtch1( const UIN LOG, const FPT * ax, const UIN * hdr, 
 	v1 = vo;
 	__syncthreads();
 	// perform warp-level reduction in v1
-	v2 = __shfl_up_sync( FULL_MASK, v1,  1 ); if (tidWARP >=  1) v1 = v1 + v2;
-	v2 = __shfl_up_sync( FULL_MASK, v1,  2 ); if (tidWARP >=  2) v1 = v1 + v2;
-	v2 = __shfl_up_sync( FULL_MASK, v1,  4 ); if (tidWARP >=  4) v1 = v1 + v2;
-	v2 = __shfl_up_sync( FULL_MASK, v1,  8 ); if (tidWARP >=  8) v1 = v1 + v2;
-	v2 = __shfl_up_sync( FULL_MASK, v1, 16 ); if (tidWARP >= 16) v1 = v1 + v2;
+	for ( i = 1; i <=16; i = i * 2 )
+	{
+		v2 = __shfl_up_sync( FULL_MASK, v1, i );
+		if (tidWARP >= i) v1 = v1 + v2;
+	}
 	__syncthreads();
 	// store warp-level results on shared memory block blk1[]
 	if (tidWARP == 31) blk1[widBLCK] = v1;
@@ -1721,11 +1721,11 @@ static __global__ void gaxtch1( const UIN LOG, const FPT * ax, const UIN * hdr, 
 	if (widBLCK == 0)
 	{
 		v2 = blk1[tidWARP];
-		v3 = __shfl_up_sync( FULL_MASK, v2,  1 ); if (tidWARP >=  1) v2 = v2 + v3;
-		v3 = __shfl_up_sync( FULL_MASK, v2,  2 ); if (tidWARP >=  2) v2 = v2 + v3;
-		v3 = __shfl_up_sync( FULL_MASK, v2,  4 ); if (tidWARP >=  4) v2 = v2 + v3;
-		v3 = __shfl_up_sync( FULL_MASK, v2,  8 ); if (tidWARP >=  8) v2 = v2 + v3;
-		v3 = __shfl_up_sync( FULL_MASK, v2, 16 ); if (tidWARP >= 16) v2 = v2 + v3;
+		for ( i = 1; i <=16; i = i * 2 )
+		{
+			v3 = __shfl_up_sync( FULL_MASK, v2, i );
+			if (tidWARP >= i) v2 = v2 + v3;
+		}
 		blk1[tidWARP] = v2;
 	}
 	__syncthreads();
