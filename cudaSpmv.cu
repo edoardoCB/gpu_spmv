@@ -1545,12 +1545,15 @@ static __global__ void gaxtuh1( const UIN TN, const FPT * ax, const UIN * rwp, F
 		const UIN rid     = rwp[widGRID];
 		const UIN pAX     = widGRID * 64 + tidWARP;
 		      FPT val;
+		      UIN i;
 		val = ax[pAX] * ax[pAX+32];
-		val = val + __shfl_down_sync( FULL_MASK, val, 16 );
-		val = val + __shfl_down_sync( FULL_MASK, val,  8 );
-		val = val + __shfl_down_sync( FULL_MASK, val,  4 );
-		val = val + __shfl_down_sync( FULL_MASK, val,  2 );
-		val = val + __shfl_down_sync( FULL_MASK, val,  1 );
+		for ( i = 16; i >= 1; i = i >> 1 )
+			val = val + __shfl_down_sync( FULL_MASK, val, i );
+		//val = val + __shfl_down_sync( FULL_MASK, val, 16 );
+		//val = val + __shfl_down_sync( FULL_MASK, val,  8 );
+		//val = val + __shfl_down_sync( FULL_MASK, val,  4 );
+		//val = val + __shfl_down_sync( FULL_MASK, val,  2 );
+		//val = val + __shfl_down_sync( FULL_MASK, val,  1 );
 		if (tidWARP == 0)  atomicAdd( &y[rid], val );
 	}
 	return;
