@@ -1807,6 +1807,110 @@ static __host__ str_res test_gaxtuh1hw08( const UIN cudaBlockSize, const str_mat
 }
 
 
+
+static __global__ void gaxtuh1hw08x2( const UIN TN, const FPT * ax, const UIN * rwp, FPT * y )
+{
+	const UIN tidGRID = blockIdx.x * blockDim.x + threadIdx.x;
+	const UIN tidWARP = tidGRID & 31;
+	const UIN tid16   = tidGRID & 15;
+	const UIN ll      = (tidGRID >> 5) * 8;
+	const UIN ul      = ll + 8;
+	      UIN t1, t2, t3, t4, r1, r2, r3, r4, p_ax1, p_ax2, p_ax3, p_ax4;
+	      FPT v0, v1, v2, v3, v4;
+	for ( t1 = ll; t1 < ul; t1 = t1 + 4 )
+	{
+		t2    = t1 + 1;
+		t3    = t1 + 2;
+		t4    = t1 + 3;
+		r1    = rwp[t1];
+		r2    = rwp[t2];
+		r3    = rwp[t3];
+		r4    = rwp[t4];
+		p_ax1 = t1 * 16 + tid16;
+		p_ax2 = t2 * 16 + tid16;
+		p_ax3 = t3 * 16 + tid16;
+		p_ax4 = t4 * 16 + tid16;
+		v1    = ax[p_ax1];
+		v1    = v1 * __shfl_down_sync( FULL_MASK, v1, 8 );
+		v2    = ax[p_ax2];
+		v2    = v2 * __shfl_up_sync  ( FULL_MASK, v2, 8 );
+		v3    = ax[p_ax3];
+		v3    = v3 * __shfl_up_sync  ( FULL_MASK, v3, 8 );
+		v4    = ax[p_ax4];
+		v4    = v4 * __shfl_up_sync  ( FULL_MASK, v4, 8 );
+		if                           (tidWARP <  8)   v0 = v1;
+		else if ( (tidWARP >=  8) && (tidWARP < 16) ) v0 = v2;
+		else if ( (tidWARP >= 16) && (tidWARP < 24) ) v0 = v3;
+		else                                          v0 = v4;
+		v0    = v0 + __shfl_down_sync( FULL_MASK, v0, 4  );
+		v0    = v0 + __shfl_down_sync( FULL_MASK, v0, 2  );
+		v0    = v0 + __shfl_down_sync( FULL_MASK, v0, 1  );
+		if (tidWARP ==  0) atomicAdd( &y[r1], v0 );
+		if (tidWARP ==  8) atomicAdd( &y[r2], v0 );
+		if (tidWARP == 16) atomicAdd( &y[r3], v0 );
+		if (tidWARP == 24) atomicAdd( &y[r4], v0 );
+	}
+	return;
+}
+
+
+
+static __host__ str_res test_gaxtuh1hw08x2( const UIN cudaBlockSize, const str_matAXT matAXT, const FPT * ref )
+{
+	// 
+	const UIN tn           = ( ( matAXT.tileN + 7 ) / 8 ) * 8;
+	const UIN cudaBlockNum = ( (tn*8) + cudaBlockSize - 1 ) / cudaBlockSize;
+	const UIN devLenAX     = tn * 16;
+	const UIN devLenSEC    = tn *  8;
+	// allocate memory on GPU
+	FPT * d_ax;  HANDLE_CUDA_ERROR( cudaMalloc( &d_ax,    devLenAX     * sizeof(FPT) ) ); TEST_POINTER( d_ax    );
+	UIN * d_rwp; HANDLE_CUDA_ERROR( cudaMalloc( &d_rwp,   devLenSEC    * sizeof(UIN) ) ); TEST_POINTER( d_rwp   );
+	FPT * d_res; HANDLE_CUDA_ERROR( cudaMalloc( &d_res,   matAXT.nrows * sizeof(FPT) ) ); TEST_POINTER( d_res   );
+	HANDLE_CUDA_ERROR( cudaMemset( d_ax,  0, devLenAX  * sizeof(FPT) ) );
+	HANDLE_CUDA_ERROR( cudaMemset( d_rwp, 0, devLenSEC * sizeof(UIN) ) );
+	// copy necessary arrays to device
+	HANDLE_CUDA_ERROR( cudaMemcpy( d_ax,    matAXT.ax,    matAXT.lenAX  * sizeof(FPT), cudaMemcpyHostToDevice ) );
+	HANDLE_CUDA_ERROR( cudaMemcpy( d_rwp,   matAXT.sec,   matAXT.lenSEC * sizeof(UIN), cudaMemcpyHostToDevice ) );
+	// create events for time measuring
+	cudaEvent_t cet1; HANDLE_CUDA_ERROR( cudaEventCreate( &cet1 ) );
+	cudaEvent_t cet2; HANDLE_CUDA_ERROR( cudaEventCreate( &cet2 ) );
+	// timed iterations
+	float ti = 0.0f, tt = 0.0f;
+	UIN i;
+	for ( i = 0; i < NUM_ITE; i++ )
+	{
+		HANDLE_CUDA_ERROR( cudaMemset( d_res, 0, matAXT.nrows  * sizeof(FPT) ) );
+		HANDLE_CUDA_ERROR( cudaEventRecord( cet1 ) );
+		gaxtuh1hw08 <<<cudaBlockNum, cudaBlockSize>>> ( tn, d_ax, d_rwp, d_res );
+		HANDLE_CUDA_ERROR( cudaEventRecord( cet2 ) );
+		HANDLE_CUDA_ERROR( cudaEventSynchronize( cet2 ) );
+		HANDLE_CUDA_ERROR( cudaEventElapsedTime( &ti, cet1, cet2 ) );
+		tt = tt + ti;
+	}
+	// destroy events for time measuring
+	HANDLE_CUDA_ERROR( cudaEventDestroy( cet1 ) );
+	HANDLE_CUDA_ERROR( cudaEventDestroy( cet2 ) );
+	// copy result from device
+	FPT * res = (FPT *) malloc( matAXT.nrows * sizeof(FPT) ); TEST_POINTER( res );
+	HANDLE_CUDA_ERROR( cudaMemcpy( res, d_res, matAXT.nrows * sizeof(FPT), cudaMemcpyDeviceToHost ) );
+	// free device memory
+	HANDLE_CUDA_ERROR( cudaFree( d_ax    ) );
+	HANDLE_CUDA_ERROR( cudaFree( d_rwp   ) );
+	HANDLE_CUDA_ERROR( cudaFree( d_res   ) );
+	// store results
+	str_res sr;
+	strcpy( sr.name, "gaxtuh1hw08x2" );
+	sr.et    = ( (double) tt / (double) NUM_ITE ) * 1e-3;
+	sr.ot    = 0.0;
+	sr.flops = ( 2.0 * ( (double) matAXT.nnz ) ) / sr.et;
+	get_errors( matAXT.nrows, ref, res, &(sr.sErr) );
+	// free cpu memory
+	free( res );
+	return( sr );
+}
+
+
+
 static __global__ void gaxtuh1hw04( const UIN TN, const FPT * ax, const UIN * rwp, FPT * y )
 {
 	const UIN tidGRID  = blockIdx.x * blockDim.x + threadIdx.x;
@@ -2526,8 +2630,9 @@ int main( int argc, char ** argv )
 	str_res sr06 = test_gaxtuh1hw32( sia.cbs, matAXT01, yr );
 	str_res sr07 = test_gaxtuh1hw16( sia.cbs, matAXT02, yr );
 	str_res sr08 = test_gaxtuh1hw08( sia.cbs, matAXT03, yr );
+	str_res sr10 = test_gaxtuh1hw08x2( sia.cbs, matAXT03, yr );
 	str_res sr09 = test_gaxtuh1hw04( sia.cbs, matAXT04, yr );
-	str_res sr10 = test_gaxtuh1hw02( sia.cbs, matAXT05, yr );
+//	str_res sr10 = test_gaxtuh1hw02( sia.cbs, matAXT05, yr );
 	str_res sr11 = test_gaxtuh     ( sia.cbs, matAXT06, yr );
 	str_res sr12 = test_gaxtuh     ( sia.cbs, matAXT07, yr );
 	str_res sr13 = test_gaxtuh     ( sia.cbs, matAXT08, yr );
