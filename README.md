@@ -17,3 +17,6 @@ AXT format.
 	- Uncompacted with tileHeight = 1.
 	- Uncompacted with tileHeight > 1. 
 	- Compacted with tileHeight = 1 (not completed)
+
+
+The AXT software has been as the AXT_SPL library registered under a GPL license. The Universidad de Santiago de Compostela has parts of the intellectual rights.
